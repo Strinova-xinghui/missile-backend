@@ -80,3 +80,32 @@ def _compare_case(case, got, exp):
             for (gx, gy), (ex, ey) in zip(gpts, epts):
                 assert abs(gx - ex) <= tol and abs(gy - ey) <= tol, \
                     f"{case.get('name')}: 第 {gl['level']} 层点不同 ({gx},{gy}) vs ({ex},{ey})"
+
+
+# --------------------------------------------------------------------- 转置/轴互换的快速判据
+def _axis_ratio(xs, ys, f, level: float) -> float:
+    """给定"值 = f(x, y)"的解析场，抽等值线后返回**横轴跨度 / 纵轴跨度**。"""
+    from app import physics as _ph
+
+    field = [[f(x, y) for y in ys] for x in xs]          # 本模块约定：field[i_x][j_y]
+    lines = _ph.marching_squares(xs, ys, field, [level])
+    assert lines, "解析场里没抽出等值线 —— 构造有问题"
+    pts = lines[0]["points"]
+    dx = max(p[0] for p in pts) - min(p[0] for p in pts)
+    dy = max(p[1] for p in pts) - min(p[1] for p in pts)
+    return float("inf") if dy <= 0 else dx / dy
+
+
+def test_marching_squares_catches_a_transposed_field():
+    """**转置/轴互换的指纹**：`t = x + 4y` 的等值线满足 Δx/Δy = −4 ⇒ 跨度比 ≈ 4；
+    把场按"第一维是 y"错填（即行列互换）后，跨度比会变成 ≈ 0.25 ⇒ 必须与 4 差得远（红）。
+
+    这条比夹具快得多，专门盯"场数组的行列与 x/y 轴颠倒"这一类（主仓 contour 要 `(len(Y), len(X))`）。
+    """
+    xs = [0.0, 1.0, 2.0, 3.0, 4.0]
+    ys = [0.0, 1.0, 2.0, 3.0, 4.0]
+    right = _axis_ratio(xs, ys, lambda x, y: x + 4.0 * y, 9.0)
+    assert abs(right - 4.0) < 0.05, f"正确朝向的跨度比应为 4，实测 {right}"
+
+    swapped = _axis_ratio(xs, ys, lambda x, y: y + 4.0 * x, 9.0)   # 等价于把场转置着填
+    assert abs(swapped - 4.0) > 1.0, f"转置后的跨度比竟然也像对的（{swapped}）—— 这条判据没牙"

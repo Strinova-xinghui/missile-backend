@@ -135,19 +135,24 @@ def overlay(kind: str, keys, *, tier: str | None = None, dv_pin: float | None = 
     total = len(xs) * len(ys)
     backend = ""
     done = 0
-    std_ginv = float(std_nominal.get("ginv") or 0.0)
+    std_point = None
+    if kind == "bg":
+        std_point = physics._pkg().bg.point_of(physics._pkg().pool.resolve(std_key))
     for i, xv in enumerate(xs):
         col = []
         for yv in ys:
             dv_target = float(xv) if kind == "plane" else float(dv_pin)
             bc_target = float(yv) if kind == "plane" else float(xv)
-            # ⚠ bg 的纵轴是**转向能力** ginv：它必须真进物理（`γ ∝ CxAoA` ⇒ 用 cxaoa_scale 把
-            #   标称 ginv 缩到目标 ginv），否则这一维只是"画出来的坐标"，等值线会整条压在一列上。
-            cxaoa = 1.0
-            if kind == "bg" and std_ginv > 0 and float(yv) > 0:
-                cxaoa = std_ginv / float(yv)
-            shot = physics.run_case(dv_target, bc_target, native=std_native,
-                                    metrics=std_metrics, tier=tier, cxaoa_scale=cxaoa)
+            if kind == "bg":
+                # ⚠ bg 的纵轴 ginv 必须**真的进物理**（只喂 (ΔV, β) 会让这一维变成纯坐标 ⇒
+                #   等值线整条压在同一 β 列）。口径不自己推：走主仓 overlay_bg 的同一条通路
+                #   `missile_solver.bg.scaling_for(point, metrics, beta=, ginv=, dv=)`。
+                shot = physics.run_case_bg(float(xv), float(yv), dv=float(dv_pin),
+                                           native=std_native, metrics=std_metrics,
+                                           point=std_point, tier=tier)
+            else:
+                shot = physics.run_case(dv_target, bc_target, native=std_native,
+                                        metrics=std_metrics, tier=tier)
             if shot.ok and shot.hit and math.isfinite(float(shot.t_hit)):
                 col.append(round(float(shot.t_hit), 6))
                 backend = backend or str(shot.backend or "")
@@ -181,8 +186,8 @@ def overlay(kind: str, keys, *, tier: str | None = None, dv_pin: float | None = 
             + (f" × BC 步长 {y_step:g}" if kind == "plane" else f"（β）× ginv 步长 {y_step:g}")
             + f"，共 {total} 个格点；iso_step = {iso_step:g} s",
             f"未命中的格点按 nan 处理（不出现在等时线里）；命中 {len(flat)} / {total}",
-            ("bg 的 ginv 用 cxaoa_scale = ginv标称/ginv目标 注入（γ ∝ CxAoA）"
-             if kind == "bg" else "plane 不注入：ΔV/β 由 scaling_for 施加"),
+            ("bg 的 ginv 注入走主仓同一条通路 bg.scaling_for(point, metrics, beta=, ginv=, dv=)"
+             if kind == "bg" else "plane 不注入：ΔV/β 由 mapping.scaling_for 施加"),
             f"tier = {tier}，求解器后端 = {backend or 'unreported'}（真跑过才写）",
         ],
         "identity": physics.identity_block(tier=tier, backend=backend, cached=False,

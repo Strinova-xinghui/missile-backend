@@ -130,6 +130,20 @@ def metrics_of(key: str):
     return pkg.pool.metrics_of(pkg.pool.resolve(key))
 
 
+def run_case_bg(beta: float, ginv: float, *, dv: float, native: str, metrics, point,
+                tier: str, scene=None):
+    """bg 平面的一跑：**照抄主仓 `workflow.overlay_bg()` 的通路** ——
+
+    `missile_solver.bg.scaling_for(point, metrics, beta=β_t, ginv=ginv_t, dv=ΔV_pin)`：
+    β 走 `mapping.scaling_for` 的 `bc_target` 位置（β ≡ BC），ginv 由 `gamma_of()` 落回物理 γ
+    再算 `cxaoa_scale`（唯一的 γ/ginv 换算点在包里）。**本模块不自己算倍率**。
+    """
+    pkg = _pkg()
+    scene = pkg.Scene() if scene is None else scene
+    scaling = pkg.bg.scaling_for(point, metrics, beta=float(beta), ginv=float(ginv), dv=float(dv))
+    return pkg.solver.run(scene, missile=native, scaling=scaling, tier=tier, want_cpa=False)
+
+
 def run_case(dv_target: float, bc_target: float, *, native: str, metrics, tier: str,
              scene=None, cxaoa_scale: float = 1.0):
     """一次解算：把目标 (ΔV, β) 通过 `mapping.scaling_for()` 施加到基准弹上。

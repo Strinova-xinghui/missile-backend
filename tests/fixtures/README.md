@@ -36,6 +36,14 @@ python -m missile_sim --overlay bg    --axes PL-12,Derby       --iso-step 5 --be
 3. **等值线的折线形态**：适配层最初把"每个格子的两个交点"直接拼起来，相邻格子共享的交点被记了两次
    （实测 8 点 vs 主仓 5 点）⇒ 改成先收"格子 → 一段"，再按端点**串成折线**（与 `contour.allsegs` 同形态）。
 
-**仍然挂着的一处（已标 `xfail`，等主仓裁决）**：bg 两条用例里，本仓的等值线 6 个点全落在同一 β 列
-（`3129.252981`），主仓是 β `3125.72 → 3138.05` 的斜线 —— 疑点：两边 bg 的网格布局可能是**转置**关系
-（plane 的 ΔV–β 两条已逐点相同，所以不是插值/层级的问题）。裁决后删掉 `xfail` 字段即可。
+4. **bg 的 ginv 没进物理（第四处，也是最终那处）**：bg 两条用例的等值线一开始**整条压在同一 β 列**
+   （`β=3129.252981` 的竖线），主仓是 β `3125.72 → 3138.05` 的斜线。**先量场再下结论**才分辨出：
+   竖线的表象既可能是"场转置"，也可能是"某一维压根没进物理"—— 实测是后者：适配层只把 `(dv_pin, β)`
+   喂给 `mapping.scaling_for()`，**ginv 只是画出来的坐标** ✗。
+   **口径按主仓复刻（单一出处，不自己推公式）**：主仓 `workflow.overlay_bg()` 用的是
+   `missile_solver.bg.scaling_for(point, metrics, beta=β_t, ginv=ginv_t, dv=ΔV_pin)`
+   （β 走 `mapping.scaling_for` 的 `bc_target` 位置；ginv 由包里的 `gamma_of()` 落回物理 γ 再算
+   `cxaoa_scale`）⇒ 本仓 `physics.run_case_bg()` 直接调它 ✓ 两条 bg 用例的最大偏差 **9.9e-5**（容差 1e-3）。
+
+**结论**：四条用例现在全是**真判据**（无 `xfail`）。另加一条更快的"转置/轴互换"判据
+（`test_marching_squares_catches_a_transposed_field`：`t = x + 4y` 的跨度比必须是 4，场转置后必变 0.25 ⇒ 红）。

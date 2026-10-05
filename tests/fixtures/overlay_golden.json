@@ -1,5 +1,5 @@
 {
-  "note": "主仓 --overlay --json 的金标输出（生成命令与漂移记录见 tests/fixtures/README.md）。plane 两条：本仓与主仓逐点相同；bg 两条：先按 xfail 挂着（差异已在 fixtures/README.md 里写清）。",
+  "note": "主仓 --overlay --json 的金标输出（生成命令与三处漂移的结论见 tests/fixtures/README.md）；四条都是真判据：axis 舍入 6 位相等 + 层级逐值相等 + 每层点集合按 tol(1e-3) 逐个比。",
   "source": {
     "repo": "Strinova-xinghui/missile-pipeline（本机 E:\\导弹包线图-release）",
     "commit": "7a89819",
@@ -170,8 +170,7 @@
           }
         ]
       },
-      "tol": 0.001,
-      "xfail": "待主仓裁决：本仓 bg 等值线的 6 个点全落在同一 β 列（3129.252981），主仓是 β 3125.7→3138.05 的斜线 —— 疑似两边 bg 网格布局是转置关系（plane 两条已逐点相同）。裁决后删掉这个字段即可。"
+      "tol": 0.001
     },
     {
       "name": "bg-derby",
@@ -226,8 +225,7 @@
           }
         ]
       },
-      "tol": 0.001,
-      "xfail": "待主仓裁决：本仓 bg 等值线的 6 个点全落在同一 β 列（3129.252981），主仓是 β 3125.7→3138.05 的斜线 —— 疑似两边 bg 网格布局是转置关系（plane 两条已逐点相同）。裁决后删掉这个字段即可。"
+      "tol": 0.001
     }
   ]
 }
