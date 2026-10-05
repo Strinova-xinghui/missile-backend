@@ -113,7 +113,7 @@ def overlay(kind: str, keys, *, tier: str | None = None, dv_pin: float | None = 
     key = physics.cache_key({"op": "overlay", "kind": kind, "keys": keys, "standard": std_key,
                              "tier": tier, "iso_step": iso_step, "dv_step": x_step,
                              "bc_step": y_step, "beta_step": beta_step, "ginv_step": ginv_step,
-                             "dv_pin": dv_pin,
+                             "dv_pin": dv_pin, "ginv_inject": bool(kind == "bg"),
                              "xlim": axis["xlim"], "ylim": axis["ylim"]})
     if cache is not None:
         hit = cache.get(key)
@@ -124,17 +124,30 @@ def overlay(kind: str, keys, *, tier: str | None = None, dv_pin: float | None = 
             out["identity"]["elapsed_ms"] = 0.0
             return out
     t0 = time.perf_counter()
+    # ⚠ **场数组的行列约定（写过一次，别让下一个人再踩）**：
+    #   主仓的等值线来自 matplotlib `ax.contour(X, Y, Z)`，它要求 `Z.shape == (len(Y), len(X))`
+    #   —— 也就是**第一维是 y 轴、第二维是 x 轴**（主仓在调用点用 `t_grid.T` 满足它）。
+    #   本模块的 `physics.marching_squares(xs, ys, grid)` 内部约定是等价的另一种写法：
+    #   `grid[i_x][j_y]` = 格点 `(xs[i_x], ys[j_y])` 的值（= 主仓那个 `t_grid`），
+    #   遍历格子时按 (i, j) 与 (i+1, j+1) 取四角 ⇒ 与 `contour(X, Y, Z.T)` 同解。
+    #   两条轴**必须**按 x=第一张表的轴、y=第二张表的轴 喂进来（plane: ΔV/β；bg: β/ginv）。
     grid = []
     total = len(xs) * len(ys)
     backend = ""
     done = 0
+    std_ginv = float(std_nominal.get("ginv") or 0.0)
     for i, xv in enumerate(xs):
         col = []
         for yv in ys:
             dv_target = float(xv) if kind == "plane" else float(dv_pin)
             bc_target = float(yv) if kind == "plane" else float(xv)
+            # ⚠ bg 的纵轴是**转向能力** ginv：它必须真进物理（`γ ∝ CxAoA` ⇒ 用 cxaoa_scale 把
+            #   标称 ginv 缩到目标 ginv），否则这一维只是"画出来的坐标"，等值线会整条压在一列上。
+            cxaoa = 1.0
+            if kind == "bg" and std_ginv > 0 and float(yv) > 0:
+                cxaoa = std_ginv / float(yv)
             shot = physics.run_case(dv_target, bc_target, native=std_native,
-                                    metrics=std_metrics, tier=tier)
+                                    metrics=std_metrics, tier=tier, cxaoa_scale=cxaoa)
             if shot.ok and shot.hit and math.isfinite(float(shot.t_hit)):
                 col.append(round(float(shot.t_hit), 6))
                 backend = backend or str(shot.backend or "")
@@ -168,6 +181,8 @@ def overlay(kind: str, keys, *, tier: str | None = None, dv_pin: float | None = 
             + (f" × BC 步长 {y_step:g}" if kind == "plane" else f"（β）× ginv 步长 {y_step:g}")
             + f"，共 {total} 个格点；iso_step = {iso_step:g} s",
             f"未命中的格点按 nan 处理（不出现在等时线里）；命中 {len(flat)} / {total}",
+            ("bg 的 ginv 用 cxaoa_scale = ginv标称/ginv目标 注入（γ ∝ CxAoA）"
+             if kind == "bg" else "plane 不注入：ΔV/β 由 scaling_for 施加"),
             f"tier = {tier}，求解器后端 = {backend or 'unreported'}（真跑过才写）",
         ],
         "identity": physics.identity_block(tier=tier, backend=backend, cached=False,
