@@ -100,6 +100,19 @@ docker run --rm -p 8080:8080 `
 **注意**：容器里通常没有 C 编译器 ⇒ `tier=fast` 会退化成纯 Python（`fallback_reason` 会写明），
 大网格请走 `/v1/jobs`，或把 `SYNC_MAX_NODES` 调小。
 
+## 5.5 已知结构债（不影响现在可跑，但别让它长出新口径）
+
+1. **共享的叠加数学应该住进求解器包**：现在"轴域 / 网格 / 等值线"这套口径在**三处**各有一份 ——
+   主仓 `figures.adaptive_axis/bg_axis` + `grid.make_grid/iso_levels/extract_isolines`、
+   主仓 `workflow.overlay_*`（W2，尚未落地）、以及本仓 `app/physics.py` 的等价实现。
+   目标形态：把 `grid` 的网格/等值线部分**移进 `missile_solver`**，并把它对 matplotlib 的依赖改成
+   **函数内惰性导入**（包本身仍不硬依赖出图库 ⇒ `-k no_matplotlib` 那条判据继续成立）；
+   主仓 `workflow.overlay_*` 与本仓都调它 ⇒ **单一实现**。在那之前，本仓的适配层**只许对齐、不许发明**。
+2. **口径金标夹具（护栏）**：`tests/fixtures/overlay_golden.json` 必须由主仓
+   `python -m missile_sim --overlay plane|bg --axes … --json` 产出（W2 的 CLI 落地后才能生成）；
+   本仓 `tests/test_api.py::test_overlay_matches_golden_fixture` 已按"夹具在就逐点/逐级比、不在就 skip"
+   写好 ⇒ 夹具一进仓，这条立刻变成真判据。
+
 ## 6. 环境变量一览
 
 | 变量 | 默认 | 说明 |

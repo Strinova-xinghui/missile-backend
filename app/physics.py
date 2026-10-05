@@ -103,6 +103,18 @@ def catalog_record() -> dict:
     return pkg.catalog.build()
 
 
+def presets() -> list:
+    """弹池那一排"预设按钮"的数据：**规则不在本仓** —— 直接问求解器包的 `pool`（`in_pool11` 那批）。
+
+    与站点 `webui._catalog_presets()` 同规则同值（判据：`tests/test_api.py::test_catalog_presets_match_site`，
+    站点那份存在时逐值比对 ⇒ "两处规则"钉成"一处事实"）。将来加「仅红外弹」时两边一起长。
+    """
+    pkg = _pkg()
+    keys = sorted(str(p.key) for p in pkg.pool.points(None))
+    return [{"label": "仅主动弹", "keys": keys,
+             "hint": f"目录里标了 in_pool11 的那 {len(keys)} 型主动雷达弹（默认弹池）"}]
+
+
 def pool_rows(keys=None) -> list:
     """弹池行（短名 → (ΔV, BC, native)），给等时线当基准弹用。"""
     pkg = _pkg()

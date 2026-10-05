@@ -18,27 +18,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import config, physics
-from app.main import BUCKET, app
 from app.runtime import TokenBucket
 
 TINY = {"kind": "plane", "keys": ["PL-12"], "tier": "fast",
         "iso_step": 5.0, "dv_step": 10.0, "bc_step": 25.0}
-
-
-@pytest.fixture()
-def client():
-    # 限流在测试里放开（专门那条自己换桶），lifespan 会跑数据门
-    BUCKET.reset()
-    with TestClient(app) as c:
-        yield c
-    BUCKET.reset()
-
-
-@pytest.fixture(autouse=True)
-def _generous_bucket(monkeypatch):
-    import app.main as m
-
-    monkeypatch.setattr(m, "BUCKET", TokenBucket(per_min=6000, burst=6000))
 
 
 # --------------------------------------------------------------------- ① health + 数据门

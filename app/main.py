@@ -153,7 +153,8 @@ async def health():
 @app.get(f"{config.API_PREFIX}/catalog")
 async def catalog():
     rec = physics.catalog_record()
-    return {"ok": True, **rec}
+    # `presets` 与站点同规则：由求解器包的 pool（`in_pool11`）现算 —— 规则只有一处
+    return {"ok": True, **rec, "presets": physics.presets()}
 
 
 @app.post(f"{config.API_PREFIX}/overlay")
