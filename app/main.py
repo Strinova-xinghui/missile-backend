@@ -98,8 +98,10 @@ class OverlayReq(BaseModel):
     tier: Literal["standard", "fast"] | None = None
     dv_pin: float | None = Field(default=None, description="bg 的固定 ΔV；不给取基准弹标称值")
     iso_step: float = Field(default=1.0, description="等时线层级间隔 [s]")
-    dv_step: float | None = Field(default=None, description="扫描步长（不给我按节点上限粗化）")
-    bc_step: float | None = None
+    dv_step: float | None = Field(default=None, description="plane 的 ΔV 步长（默认 10）")
+    bc_step: float | None = Field(default=None, description="plane 的 β 步长（默认 25）")
+    beta_step: float | None = Field(default=None, description="bg 的 β 步长（默认 30）")
+    ginv_step: float | None = Field(default=None, description="bg 的 ginv 步长（默认 4e-4）")
     standard: str | None = Field(default=None, description="基准弹（池内短名），默认 PL-12")
     sync: bool = Field(default=True, description="false ⇒ 允许用 job 上限的节点数（仅供 /v1/jobs 内部）")
 
@@ -121,6 +123,8 @@ class JobReq(BaseModel):
     iso_step: float = 1.0
     dv_step: float | None = None
     bc_step: float | None = None
+    beta_step: float | None = None
+    ginv_step: float | None = None
     standard: str | None = None
     level_s: float = 1.0
     grid: int | None = None
@@ -162,6 +166,7 @@ async def post_overlay(req: OverlayReq):
     _check_keys(req.keys)
     return overlay.overlay(req.kind, req.keys, tier=req.tier, dv_pin=req.dv_pin,
                            iso_step=req.iso_step, dv_step=req.dv_step, bc_step=req.bc_step,
+                           beta_step=req.beta_step, ginv_step=req.ginv_step,
                            standard=req.standard, sync=req.sync, cache=CACHE)
 
 
@@ -184,7 +189,8 @@ async def post_jobs(req: JobReq):
         kind = req.kind if req.kind in ("plane", "bg") else "plane"
         fn = lambda report: overlay.overlay(kind, req.keys, tier=req.tier, dv_pin=req.dv_pin,
                                             iso_step=req.iso_step, dv_step=req.dv_step,
-                                            bc_step=req.bc_step, standard=req.standard,
+                                            bc_step=req.bc_step, beta_step=req.beta_step,
+                                            ginv_step=req.ginv_step, standard=req.standard,
                                             sync=False, report=report, cache=CACHE)
     job_id = JOBS.submit(fn, label=op)
     return {"ok": True, "job_id": job_id, "op": op,
@@ -210,10 +216,12 @@ async def get_job(job_id: str):
 
 @app.get(f"{config.API_PREFIX}/estimate")
 async def estimate(kind: Literal["plane", "bg"], keys: str | None = None,
-                   dv_step: float | None = None, bc_step: float | None = None):
+                   dv_step: float | None = None, bc_step: float | None = None,
+                   beta_step: float | None = None, ginv_step: float | None = None):
     """成本预估（不跑解算）：这次请求会铺多大网格、能不能走同步。"""
     ks = [k.strip() for k in (keys or "").split(",") if k.strip()] or None
-    return {"ok": True, **overlay.grid_estimate(kind, ks, dv_step=dv_step, bc_step=bc_step)}
+    return {"ok": True, **overlay.grid_estimate(kind, ks, dv_step=dv_step, bc_step=bc_step,
+                                                beta_step=beta_step, ginv_step=ginv_step)}
 
 
 # --------------------------------------------------------------------- 小工具

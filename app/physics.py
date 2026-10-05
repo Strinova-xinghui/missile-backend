@@ -152,11 +152,22 @@ def _pad_axis(vals, *, frac: float, min_pad: float) -> tuple:
 
 
 def axis_plane(rows) -> dict:
-    """图1 的轴域：`xlim` = ΔV、`ylim` = β（口径对齐 `figures.adaptive_axis`）。"""
+    """图1 的轴域：`xlim` = ΔV、`ylim` = β（口径对齐 `figures.adaptive_axis`）。
+
+    ⚠ 主仓那条轴**落定到 3 位小数**（`AxisSpec(xlim=(round(x0, 3), round(x1, 3)))`）—— 金标夹具
+    第一枪就是这里对不上：适配层算出 `920.569749`，主仓是 `920.57`。这是"对齐主仓"，
+    **不是**放宽容差。（`bg` 那条轴主仓不落位小数 ⇒ 见 `axis_bg`，保持原样。）
+    """
     if not rows:
         raise config.bad_request("empty_keys", "轴至少需要一个弹")
-    return {"xlim": list(_pad_axis([r["dv"] for r in rows], frac=PAD_FRAC, min_pad=MIN_PAD["x"])),
-            "ylim": list(_pad_axis([r["bc"] for r in rows], frac=PAD_FRAC, min_pad=MIN_PAD["y"]))}
+    return {"xlim": list(_round_to(_pad_axis([r["dv"] for r in rows], frac=PAD_FRAC,
+                                            min_pad=MIN_PAD["x"]), 3)),
+            "ylim": list(_round_to(_pad_axis([r["bc"] for r in rows], frac=PAD_FRAC,
+                                            min_pad=MIN_PAD["y"]), 3))}
+
+
+def _round_to(pair, digits: int) -> tuple:
+    return (round(float(pair[0]), digits), round(float(pair[1]), digits))
 
 
 def axis_bg(rows) -> dict:
@@ -205,7 +216,11 @@ def marching_squares(xs, ys, grid, levels) -> list:
     """线性等值线（口径对齐主仓 `grid.extract_isolines`，实现不依赖 matplotlib）。
 
     `grid[i][j]` = 格点 `(xs[i], ys[j])` 的值；`nan` 表示未命中（**不参与**插值）。
-    返回 `[{"level": t, "points": [[x, y], …], "closed": bool}, …]` —— 点按段拼接，顺序不保证。
+    返回 `[{"level": t, "points": [[x, y], …], "closed": bool}, …]`，其中 `points` 是**首尾相接的折线**
+    （与主仓 `contour.allsegs` 同一形态）。
+
+    ⚠ 2026-10-05 金标夹具第二枪：最初把每个格子的两个交点**直接拼在一起**，导致相邻格子共享的那个交点
+    出现两次（实测 8 点 vs 主仓 5 点）⇒ 这里改成先收"格子 → 一段（两点）"，再按端点**串成折线**。
     """
     seg_out = []
     for level in levels:
@@ -215,17 +230,50 @@ def marching_squares(xs, ys, grid, levels) -> list:
                 corners = ((xs[i], ys[j], grid[i][j]), (xs[i + 1], ys[j], grid[i + 1][j]),
                            (xs[i + 1], ys[j + 1], grid[i + 1][j + 1]),
                            (xs[i], ys[j + 1], grid[i][j + 1]))
-                segs.append(_cell_segment(corners, float(level)))
+                seg = _cell_segment(corners, float(level))
+                if seg:
+                    segs.append(tuple(seg))
+        if not segs:
+            continue
         pts, closed = [], False
-        for seg in segs:
-            if seg is None:
-                continue
-            pts.extend(seg)
-            if len(seg) >= 3 and _same(seg[0], seg[-1]):
+        for line in _chain(segs):
+            pts.extend(line)
+            if len(line) >= 3 and _same(line[0], line[-1]):
                 closed = True
         if pts:
             seg_out.append({"level": float(level), "points": pts, "closed": closed})
     return seg_out
+
+
+def _chain(segs) -> list:
+    """把"一段两点"的集合串成折线：贪心接端点（容差 `1e-9`），接不上就开新折线。"""
+    todo = list(segs)
+    lines = []
+    while todo:
+        line = list(todo.pop(0))
+        grew = True
+        while grew:
+            grew = False
+            for k, seg in enumerate(todo):
+                a, b = seg
+                if _same(line[-1], a):
+                    line.append(b)
+                elif _same(line[-1], b):
+                    line.append(a)
+                elif _same(line[0], b):
+                    line.insert(0, a)
+                elif _same(line[0], a):
+                    line.insert(0, b)
+                else:
+                    continue
+                todo.pop(k)
+                grew = True
+                break
+        # 闭合的最后一点与首点重合时，去掉重复的尾点（与 allsegs 一致）
+        if len(line) >= 3 and _same(line[0], line[-1]):
+            line = line[:-1]
+        lines.append(line)
+    return lines
 
 
 def _same(a, b, tol: float = 1e-9) -> bool:

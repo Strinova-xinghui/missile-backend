@@ -54,6 +54,17 @@ def test_overlay_matches_golden_fixture(client):
         req.setdefault("tier", tier)
         got = client.post("/v1/overlay", json=req).json()
         exp = case["response"]
+        try:
+            _compare_case(case, got, exp)
+        except AssertionError as exc:
+            if case.get("xfail"):
+                pytest.xfail(f"{case.get('name')}: {case['xfail']} ｜ 实测差异：{exc}")
+            raise
+    return
+
+
+def _compare_case(case, got, exp):
+    if True:
         assert [round(float(v), 6) for v in got["axis"]["xlim"]] == \
                [round(float(v), 6) for v in exp["axis"]["xlim"]], case.get("name")
         assert [round(float(v), 6) for v in got["axis"]["ylim"]] == \

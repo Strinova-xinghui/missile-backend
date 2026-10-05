@@ -20,9 +20,15 @@ import time
 
 from . import config, physics
 
-#: 主仓 `workflow.PlaneRequest` / `BgRequest` 的默认步长（口径）。
+#: 主仓 `workflow.PlaneRequest` 的默认步长（口径）：ΔV 10 / β 25。
 DEFAULT_DV_STEP = 10.0
 DEFAULT_BC_STEP = 25.0
+#: 主仓 `workflow.BgRequest` 的默认步长（口径）：β 30 / **ginv 4e-4**。
+#: ⚠ 2026-10-05 教训（金标夹具第一枪就打出来的漂移）：适配层最初把 plane 的 10/25 复用到 bg 上，
+#: 而 bg 的纵轴是 ginv ≈ 0.015（1e-4 量级）⇒ 一步跨完整个轴、网格只剩一列，等时线全错。
+#: 两种 kind 的步长**必须分开**，别图省事复用。
+DEFAULT_BETA_STEP = 30.0
+DEFAULT_GINV_STEP = 4e-4
 #: 等时面的默认每轴采样数（5 ⇒ 125 个顶点；要更细就走 `/v1/jobs`）。
 DEFAULT_CUBE_N = 5
 
@@ -31,12 +37,20 @@ def _coarsen(step: float, factor: int) -> float:
     return float(step) * (2 ** int(factor))
 
 
-def grid_steps(kind: str, axis: dict, *, dv_step, bc_step, max_nodes: int) -> tuple[float, float, int]:
-    """定这次扫描的步长：显式给了就用（受节点上限约束），否则从主仓默认值逐级粗化到上限内。"""
-    x_step = float(dv_step) if dv_step else DEFAULT_DV_STEP
-    y_step = float(bc_step) if bc_step else DEFAULT_BC_STEP
+def grid_steps(kind: str, axis: dict, *, dv_step=None, bc_step=None, beta_step=None,
+               ginv_step=None, max_nodes: int) -> tuple[float, float, int]:
+    """定这次扫描的步长（两种 kind 各一套默认值，见上面那三个常量）：显式给了就用
+    （受节点上限约束），否则从主仓默认值逐级粗化到上限内。"""
+    if kind == "plane":
+        x_step = float(dv_step) if dv_step else DEFAULT_DV_STEP
+        y_step = float(bc_step) if bc_step else DEFAULT_BC_STEP
+        explicit = bool(dv_step or bc_step)
+    else:
+        x_step = float(beta_step) if beta_step else DEFAULT_BETA_STEP
+        y_step = float(ginv_step) if ginv_step else DEFAULT_GINV_STEP
+        explicit = bool(beta_step or ginv_step)
     if x_step <= 0 or y_step <= 0:
-        raise config.bad_request("bad_step", "dv_step / bc_step 必须为正")
+        raise config.bad_request("bad_step", "步长必须为正")
     span_x = float(axis["xlim"][1]) - float(axis["xlim"][0])
     span_y = float(axis["ylim"][1]) - float(axis["ylim"][0])
     for _ in range(24):
@@ -44,7 +58,7 @@ def grid_steps(kind: str, axis: dict, *, dv_step, bc_step, max_nodes: int) -> tu
         ny = int(span_y / y_step) + 2
         if nx * ny <= max_nodes:
             return x_step, y_step, nx * ny
-        if dv_step or bc_step:                 # 显式步长不许偷偷改 ⇒ 超限直接报错
+        if explicit:                           # 显式步长不许偷偷改 ⇒ 超限直接报错
             raise config.Problem(413, "grid_too_large",
                                  f"网格太大（约 {nx}×{ny} = {nx * ny} 个格点，上限 {max_nodes}）"
                                  "—— 请放宽步长，或改用 /v1/jobs", nodes=nx * ny, limit=max_nodes)
@@ -71,8 +85,8 @@ def _axis_rows(kind: str, keys):
 
 
 def overlay(kind: str, keys, *, tier: str | None = None, dv_pin: float | None = None,
-            iso_step: float = 1.0, dv_step=None, bc_step=None, standard: str | None = None,
-            sync: bool = True, report=None, cache=None) -> dict:
+            iso_step: float = 1.0, dv_step=None, bc_step=None, beta_step=None, ginv_step=None,
+            standard: str | None = None, sync: bool = True, report=None, cache=None) -> dict:
     """等时线：`kind="plane"` 在 (ΔV, β) 上扫，`kind="bg"` 在 (β, ginv) 上扫。
 
     基准弹（等时线属于它）默认 `STANDARD_MISSILE`（PL-12）；`bg` 的固定 ΔV 默认取基准弹的标称值。
@@ -93,11 +107,13 @@ def overlay(kind: str, keys, *, tier: str | None = None, dv_pin: float | None = 
     if kind == "bg" and dv_pin is None:
         dv_pin = float(std_nominal["dv"])
     limit = config.sync_max_nodes() if sync else config.job_max_nodes()
-    x_step, y_step, nodes = grid_steps(kind, axis, dv_step=dv_step, bc_step=bc_step, max_nodes=limit)
+    x_step, y_step, nodes = grid_steps(kind, axis, dv_step=dv_step, bc_step=bc_step,
+                                       beta_step=beta_step, ginv_step=ginv_step, max_nodes=limit)
     xs, ys = physics.make_grid(axis["xlim"], axis["ylim"], step=x_step, step_y=y_step)
     key = physics.cache_key({"op": "overlay", "kind": kind, "keys": keys, "standard": std_key,
                              "tier": tier, "iso_step": iso_step, "dv_step": x_step,
-                             "bc_step": y_step, "dv_pin": dv_pin,
+                             "bc_step": y_step, "beta_step": beta_step, "ginv_step": ginv_step,
+                             "dv_pin": dv_pin,
                              "xlim": axis["xlim"], "ylim": axis["ylim"]})
     if cache is not None:
         hit = cache.get(key)
@@ -136,7 +152,10 @@ def overlay(kind: str, keys, *, tier: str | None = None, dv_pin: float | None = 
         "kind": kind,
         "keys": [r["key"] for r in rows],
         "standard": std_key,
-        "axis": {"xlim": [float(xs[0]), float(xs[-1])], "ylim": [float(ys[0]), float(ys[-1])],
+        # ⚠ `axis` 报的是**轴域**（自适应轴，与主仓 overlay 同口径）；网格端点可能比它窄一点
+        #   （范围按步长向内对齐）。实际用的步长另用 `x_step/y_step` 如实报出。
+        "axis": {"xlim": [float(axis["xlim"][0]), float(axis["xlim"][1])],
+                 "ylim": [float(axis["ylim"][0]), float(axis["ylim"][1])],
                  "x_step": x_step, "y_step": y_step},
         "iso_lines": lines,
         "t_range_s": [min(flat), max(flat)] if flat else None,
@@ -331,13 +350,13 @@ def big_overlay_spec(kind: str, keys, **kw) -> dict:
     return {"kind": kind, "keys": list(keys or []), **kw}
 
 
-def grid_estimate(kind: str, keys, *, dv_step=None, bc_step=None) -> dict:
+def grid_estimate(kind: str, keys, *, dv_step=None, bc_step=None, beta_step=None,
+                  ginv_step=None) -> dict:
     """不跑解算的**成本预估**（给客户端决定走同步还是任务）：节点数 + 是否超同步上限。"""
     rows, axis = _axis_rows(kind, keys)
-    steps = (float(dv_step) if dv_step else DEFAULT_DV_STEP,
-             float(bc_step) if bc_step else DEFAULT_BC_STEP)
     try:
-        x, y, nodes = grid_steps(kind, axis, dv_step=steps[0], bc_step=steps[1],
+        x, y, nodes = grid_steps(kind, axis, dv_step=dv_step, bc_step=bc_step,
+                                 beta_step=beta_step, ginv_step=ginv_step,
                                  max_nodes=config.job_max_nodes())
     except config.Problem as exc:
         return {"ok": False, "error": exc.payload()["error"], "axis": axis}
