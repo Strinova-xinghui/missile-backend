@@ -1,0 +1,233 @@
+{
+  "note": "主仓 --overlay --json 的金标输出（生成命令与漂移记录见 tests/fixtures/README.md）。plane 两条：本仓与主仓逐点相同；bg 两条：先按 xfail 挂着（差异已在 fixtures/README.md 里写清）。",
+  "source": {
+    "repo": "Strinova-xinghui/missile-pipeline（本机 E:\\导弹包线图-release）",
+    "commit": "7a89819",
+    "tier": "standard"
+  },
+  "requests": [
+    {
+      "name": "plane-2-keys",
+      "command": "--overlay plane --axes PL-12,MICA --iso-step 5 --dv-step 20 --bc-step 50 --json",
+      "request": {
+        "kind": "plane",
+        "keys": [
+          "PL-12",
+          "MICA"
+        ],
+        "tier": "standard",
+        "iso_step": 5.0,
+        "dv_step": 20.0,
+        "bc_step": 50.0
+      },
+      "response": {
+        "axis": {
+          "xlim": [
+            920.57,
+            958.99
+          ],
+          "ylim": [
+            2576.004,
+            3138.053
+          ]
+        },
+        "iso_lines": [
+          {
+            "level": 45.0,
+            "points": [
+              [
+                958.99,
+                2931.1512209534962
+              ],
+              [
+                956.3127732907758,
+                2950.0
+              ],
+              [
+                949.373276042322,
+                3000.0
+              ],
+              [
+                942.6981221141942,
+                3050.0000000000005
+              ],
+              [
+                940.0,
+                3070.6762721427594
+              ]
+            ]
+          }
+        ]
+      },
+      "tol": 0.001
+    },
+    {
+      "name": "plane-3-keys",
+      "command": "--overlay plane --axes PL-12,MICA,Derby --iso-step 5 --dv-step 20 --bc-step 50 --json",
+      "request": {
+        "kind": "plane",
+        "keys": [
+          "PL-12",
+          "MICA",
+          "Derby"
+        ],
+        "tier": "standard",
+        "iso_step": 5.0,
+        "dv_step": 20.0,
+        "bc_step": 50.0
+      },
+      "response": {
+        "axis": {
+          "xlim": [
+            920.57,
+            958.99
+          ],
+          "ylim": [
+            2507.015,
+            3138.053
+          ]
+        },
+        "iso_lines": [
+          {
+            "level": 45.0,
+            "points": [
+              [
+                958.99,
+                2931.1512209534962
+              ],
+              [
+                956.3127732907758,
+                2950.0
+              ],
+              [
+                949.373276042322,
+                3000.0
+              ],
+              [
+                942.6981221141942,
+                3050.0000000000005
+              ],
+              [
+                940.0,
+                3070.6762721427594
+              ]
+            ]
+          }
+        ]
+      },
+      "tol": 0.001
+    },
+    {
+      "name": "bg-2-keys",
+      "command": "--overlay bg --axes PL-12,MICA --iso-step 5 --beta-step 60 --ginv-step 8e-4 --json",
+      "request": {
+        "kind": "bg",
+        "keys": [
+          "PL-12",
+          "MICA"
+        ],
+        "tier": "standard",
+        "iso_step": 5.0,
+        "beta_step": 60.0,
+        "ginv_step": 0.0008
+      },
+      "response": {
+        "axis": {
+          "xlim": [
+            2576.003745,
+            3138.053016
+          ],
+          "ylim": [
+            0.014621,
+            0.018568
+          ]
+        },
+        "iso_lines": [
+          {
+            "level": 45.0,
+            "points": [
+              [
+                3138.053016,
+                0.016619167121407378
+              ],
+              [
+                3136.7469110530383,
+                0.0168
+              ],
+              [
+                3131.4899048394145,
+                0.0176
+              ],
+              [
+                3126.6735522782074,
+                0.0184
+              ],
+              [
+                3125.7222244599716,
+                0.018568
+              ]
+            ]
+          }
+        ]
+      },
+      "tol": 0.001,
+      "xfail": "待主仓裁决：本仓 bg 等值线的 6 个点全落在同一 β 列（3129.252981），主仓是 β 3125.7→3138.05 的斜线 —— 疑似两边 bg 网格布局是转置关系（plane 两条已逐点相同）。裁决后删掉这个字段即可。"
+    },
+    {
+      "name": "bg-derby",
+      "command": "--overlay bg --axes PL-12,Derby --iso-step 5 --beta-step 60 --ginv-step 8e-4 --json",
+      "request": {
+        "kind": "bg",
+        "keys": [
+          "PL-12",
+          "Derby"
+        ],
+        "tier": "standard",
+        "iso_step": 5.0,
+        "beta_step": 60.0,
+        "ginv_step": 0.0008
+      },
+      "response": {
+        "axis": {
+          "xlim": [
+            2507.015211,
+            3138.053016
+          ],
+          "ylim": [
+            0.011865,
+            0.018568
+          ]
+        },
+        "iso_lines": [
+          {
+            "level": 45.0,
+            "points": [
+              [
+                3138.053016,
+                0.016619167121407378
+              ],
+              [
+                3136.7469110530383,
+                0.0168
+              ],
+              [
+                3131.4899048394145,
+                0.0176
+              ],
+              [
+                3126.6735522782074,
+                0.0184
+              ],
+              [
+                3125.7222244599716,
+                0.018568
+              ]
+            ]
+          }
+        ]
+      },
+      "tol": 0.001,
+      "xfail": "待主仓裁决：本仓 bg 等值线的 6 个点全落在同一 β 列（3129.252981），主仓是 β 3125.7→3138.05 的斜线 —— 疑似两边 bg 网格布局是转置关系（plane 两条已逐点相同）。裁决后删掉这个字段即可。"
+    }
+  ]
+}
