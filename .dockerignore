@@ -1,0 +1,17 @@
+.git
+.gitignore
+.gitattributes
+**/__pycache__
+**/*.py[cod]
+.venv
+venv
+.cache
+cache
+.tmp_test
+tests
+*.log
+# 数据绝不打进镜像
+*.blk
+*.blkx
+inputs/
+resources/

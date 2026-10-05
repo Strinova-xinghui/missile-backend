@@ -1,0 +1,4 @@
+# 运行期依赖（版本下限按本机实测；Python 3.12~3.14）
+fastapi>=0.142,<1
+uvicorn[standard]>=0.54,<1
+missile-solver @ git+https://github.com/Strinova-xinghui/missile-solver@main

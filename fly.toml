@@ -1,0 +1,36 @@
+# 部署到 Fly.io（或同类）：数据**不进镜像** —— 用 volume 挂到 /data 后把 DATA_DIR 指过去。
+# 本地开发不用这份文件（见 README「本地起服务」）。
+app = "missile-backend"
+primary_region = "nrt"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  DATA_DIR = "/data/2.59.0.28"
+  TIER_DEFAULT = "fast"
+  CORS_ORIGINS = "https://strinova-xinghui.github.io"
+  ALLOW_LOCALHOST_ORIGINS = "1"
+  CACHE_DIR = "/data/cache"
+  JOB_WORKERS = "2"
+  RATE_LIMIT_PER_MIN = "60"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 64
+    soft_limit = 32
+
+[[mounts]]
+  source = "missile_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"

@@ -1,0 +1,28 @@
+# 数据一律不入库（运行期由 DATA_DIR 指过去；见 README「数据」一节）
+*.blk
+*.blkx
+inputs/
+datamatch
+resources/
+*.vromfs*
+*.bin
+*.bin_u
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 运行期缓存与临时件
+.cache/
+cache/
+.tmp_test/
+*.log

@@ -1,0 +1,47 @@
+# `missile-backend` —— 等时线/等时面计算服务（W1）
+#
+# 定位：**只做计算与转发，不做页面**。依赖公开发布的求解器包 `missile-solver`；
+# 游戏数据**不入库、不入镜像**，运行期由 `DATA_DIR` 指过去（启动时 `verify_data()` 不通过就拒启）。
+#
+# 许可：**AGPL-3.0-only**（根目录 `LICENSE` 与求解器仓逐字节同一份）。
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "missile-backend"
+version = "0.1.0"
+description = "War Thunder 主动弹：等时线/等时面的计算服务（FastAPI；数据外部挂载）"
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+authors = [{ name = "卡拉彼丘活了喵" }]
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+keywords = ["war-thunder", "missile", "6dof", "isochrone", "fastapi"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+  "fastapi>=0.142,<1",
+  "uvicorn[standard]>=0.54,<1",
+  "missile-solver @ git+https://github.com/Strinova-xinghui/missile-solver@main",
+]
+
+[project.optional-dependencies]
+# 开发/自测：httpx 是 FastAPI TestClient 要的；pytest 只在本地跑（CI 也用它）。
+dev = ["pytest>=8", "httpx>=0.28"]
+
+[project.urls]
+Homepage = "https://github.com/Strinova-xinghui/missile-backend"
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
