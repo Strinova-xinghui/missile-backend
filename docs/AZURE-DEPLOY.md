@@ -111,7 +111,23 @@ Functions 是**事件驱动横向扩缩**（Consumption 上限 100/200 实例，
 ### 方案 A：与卫戍协议共用那台免费 VM — **首选**
 
 学生订阅已含 **750 h/月**的 B1s / B2pts_v2(Arm) / B2ats_v2(AMD)，750 h ≈ 31.25 天 ⇒ 可 24/7 常驻，
-**只有磁盘收费**（P6 64 GiB ≈ `$0.73/月` ≈ `$8.76/年`）。
+**只有磁盘收费**。
+
+> ⚠️ **2026-10-09 更正**：此前记的「P6 64 GiB ≈ `$0.73/月`」**是错的**——`$0.728` 是
+> `P6 LRS Disk Mount`（挂载计费项）的单价，不是磁盘本体。Azure Retail Prices API 实测（eastasia）：
+>
+> | 档位 | 容量 | 月价 | 年价 | 对 $100 额度 |
+> | --- | --- | --- | --- | --- |
+> | `P4 LRS` Premium SSD | 32 GiB | `$5.8072` | `$69.69` | ⚠️ 吃掉 70% |
+> | `P6 LRS` Premium SSD | 64 GiB | `$11.2272` | `$134.73` | ❌ **超支 $34.73** |
+> | `E4 LRS` Standard SSD | 32 GiB | `$2.40` | `$28.80` | ✅ **推荐** |
+> | `E6 LRS` Standard SSD | 64 GiB | `$4.80` | `$57.60` | ✅ 可接受 |
+> | `S4 LRS` Standard HDD | 32 GiB | `$1.536` | `$18.43` | ✅ 最省（IO 慢） |
+> | `S6 LRS` Standard HDD | 64 GiB | `$3.008` | `$36.10` | ✅ 省（IO 慢） |
+>
+> **做法：系统盘保持门户默认的 30 GiB（按 32 GiB 档计费）、类型选 Standard SSD（`E4`）**
+> ⇒ 一年 `$28.80`，$100 额度绰绰有余。**切勿选 64 GiB Premium（P6）**：`$134.73/年` 会直接
+> 超出 $100 额度，一年后倒欠 `$34.73`。本项目磁盘需求极小（依赖 + 数据共几百 MB），30 GiB 足够。
 
 既然卫戍协议迁移**已经要开这台 VM**，missile-backend 直接在同一台机上 `docker run` 即可：
 
@@ -205,9 +221,55 @@ Azure DevOps、ExpressRoute、Marketplace 第三方产品等）。$100 额度 12
 3. **次选方案 B**（ACA）：仅当「能接受冷启动 + 愿意把状态外置」时才划算（否则要么多实例出错，
    要么锁单实例变常驻计费）。
 4. **部署前必做**：① 确认真实 `docker build` 能起来（本机无 docker CLI，这是所有方案的共同前置风险）；
-   ② 确认学生订阅的可用区域。
+   ② 确认学生订阅的可用区域；③ **系统盘选 Standard SSD（E4）、保持 30 GiB**（见 §3 方案 A 更正表）。
 5. **数据不入镜像**这条底线继续遵守：`.blk` 是 War Thunder 数据（© Gaijin），
    `.gitignore` 已排除，运行期靠 `DATA_DIR` 挂载。
+
+---
+
+## 5.5 其他候选（第二路核实结论，2026-10-09）
+
+为完整起见记录了 Azure 之外/之内其他候选的结论。**均不改变上面的推荐**（共用 VM 仍最优），
+但它们排除了若干看起来诱人的选项：
+
+| 候选 | 关键限制 | 判定 |
+| --- | --- | --- |
+| **Azure App Service F1（免费）** | ✅ 确实支持 Linux 自定义容器；但 **CPU 时间仅 60 分钟/天**、1 GB 存储、32-bit、自定义域 = 0 | ❌ 60 CPU 分/天 对 numpy 计算服务是致命的 |
+| **Azure App Service B1（付费）** | `$0.02/小时` ≈ **`$14.6/月`** | ⚠️ 比 E4 磁盘贵，且仍不如共用 VM |
+| **Google Cloud Run** | 免费额度与 ACA 同量级（180,000 vCPU·秒 / 360,000 GiB·秒 / 200 万请求）；**请求超时默认 300 秒、最长 3600 秒**（优于 ACA 的 240 秒） | ⚠️ 但同样「常驻即超额度 + 换实例丢状态」，且需绑卡 |
+| **Fly.io** | 官方原文：*"New organizations don't have a free tier or a monthly free usage allowance."* 仅剩 2 小时/7 天试用；常驻最小应用 `$2.19/30 天`、`shared-cpu-1x 512MB` `$3.69/月` | ❌ **免费额度已取消**（现有 `fly.toml` 仍可用，但要付费） |
+| **Railway Free** | 官方原文：*"30-day free trial with $5 credits, then **$1 per month**"*，1 vCPU / **0.5 GB RAM** / 0.5 GB 卷 | ⚠️ 不是真免费；0.5 GB 内存对 numpy 偏紧 |
+| **Render Free** | **15 分钟无流量即休眠**、回温约 1 分钟；0.1 CPU / 512 MB | ❌ 休眠直接摧毁进程内状态 |
+| **Koyeb** | 官方口径**自相矛盾**：文档 FAQ 说有 free 实例，定价页已无免费档 | ❓ **存疑**，不作推荐 |
+| **Hugging Face Spaces** | 二手信息称免费档不能用 Docker（Docker/Gradio 需付费计划），免费硬件会 sleep | ❓ **未能独立核实**（见下方说明），暂不采信 |
+
+> ⚠️ **诚实边界**：HF Spaces 这条**我无法在本机核实** —— `huggingface.co` 在本机 DNS 被
+> Clash fake-ip 解析为 `198.18.1.105`，直连与走代理（`127.0.0.1:7897`，已实测可用）均取不到内容，
+> 搜索引擎也未返回官方原文。注意这与 `E:\卫戍协议\docs\CLOUD-HOSTING.md` 方案一的描述**冲突**
+> （那里写 HF Spaces 免费提供 2 vCPU / 16 GB Docker 环境）。**若将来要用 HF Spaces，必须先自行核实。**
+> 其余各条的官方原文均已取到。
+
+---
+
+## 5.6 一个可选改进：前后端同源（消除 CORS）
+
+`E:\导弹包线图-ghpages` 是 GitHub Pages 静态站，若将来它去 `fetch` 本后端，就产生**跨域**，
+而本服务的 CORS 是**显式白名单**（`*` 会 `raise ValueError`），必须配置 `CORS_ORIGINS`。
+
+**更省事的替代方案**：让 FastAPI 自己把静态页发出去，前端与 API **同源** ⇒ CORS 需求从根上消失。
+FastAPI 官方支持（[frontend](https://fastapi.tiangolo.com/tutorial/frontend/) /
+[static-files](https://fastapi.tiangolo.com/tutorial/static-files/)）：
+
+```python
+# 方式一：StaticFiles（html=True 支持 index.html）
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
+
+# 方式二：app.frontend()（官方新增，额外处理客户端路由）
+```
+
+官方明确保证顺序：*"FastAPI checks path operations first. The frontend files are checked only if no
+normal route matched"* ⇒ `/v1/*` 与静态页**可共存不冲突**。
+代价：静态站失去 GitHub Pages 的独立 CDN 与独立部署流程。**这是一个取舍，不是必须。**
 
 ---
 
