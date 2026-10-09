@@ -25,4 +25,4 @@ USER appuser
 
 EXPOSE 8080
 # 启动即校验 DATA_DIR（缺件/哈希不符 ⇒ 进程直接退出，见 app/physics.py 的 data_gate）
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port "]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
