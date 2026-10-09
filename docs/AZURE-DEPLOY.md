@@ -174,6 +174,8 @@ Functions 确实有免费额度（[定价页](https://azure.microsoft.com/en-us/
 **但这对本服务没有意义** —— 决定性因素是架构（2.1–2.3），不是价格。
 另外定价页有一条脚注需警惕：*"Free grants apply to the on-demand meters on **paid, consumption
 subscriptions only**."* 学生订阅是否算 paid consumption subscription，措辞不直白，需门户实测账单。
+（**缓解证据**：学生页 Compute 分类下明确列出 `Azure Functions — 1 million requests`，标签 **Always** —— 额度数与
+Consumption 档的 100 万次一致，倾向于「适用」；但页脚注措辞仍未消除歧义，**以门户实开一台验证账单为 $0 为准**。）
 （Premium 档绝无免费可能：东亚实测 EP1 = vCPU `$0.20/h` + 内存 `$0.01/GiB·h`，
 1 vCPU + 3.5 GiB 常驻一个月 ≈ **$171.55**。）
 
