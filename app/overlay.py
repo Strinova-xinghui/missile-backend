@@ -194,7 +194,7 @@ def overlay(kind: str, keys, *, tier: str | None = None, dv_pin: float | None = 
                                           elapsed_ms=elapsed, nodes=total),
     }
     if cache is not None:
-        cache.put(key, out)
+        cache.put(key, out)          # ⚠ 等时线整份结果也进缓存（键含 kind/keys/步长/iso_step/版本哈希）
     return out
 
 
@@ -246,40 +246,53 @@ def isosurface(keys=None, *, tier: str | None = None, level_s: float = 1.0, grid
     dv_axis = (dv0 * 0.9, dv0 * 1.1)
     bc_axis = (bc0 * 0.9, bc0 * 1.1)
     ginv_axis = (ginv0 * 0.8, ginv0 * 1.2)
-    key = physics.cache_key({"op": "isosurface", "key": row["key"], "tier": tier,
-                             "level_s": float(level_s), "n": n})
-    if cache is not None:
-        hit = cache.get(key)
-        if hit is not None:
-            out = dict(hit)
-            out["identity"] = dict(out.get("identity") or {})
-            out["identity"]["cached"] = True
-            out["identity"]["elapsed_ms"] = 0.0
-            return out
-    t0 = time.perf_counter()
-    xs = [dv_axis[0] + (dv_axis[1] - dv_axis[0]) * i / (n - 1) for i in range(n)]
-    ys = [bc_axis[0] + (bc_axis[1] - bc_axis[0]) * i / (n - 1) for i in range(n)]
-    zs = [ginv_axis[0] + (ginv_axis[1] - ginv_axis[0]) * i / (n - 1) for i in range(n)]
-    native, metrics = row["native"], None
-    pkg = physics._pkg()
-    metrics = pkg.pool.metrics_of(pkg.pool.resolve(row["key"]))
-    values = {}
-    backend = ""
-    done, total = 0, n ** 3
-    for i, xv in enumerate(xs):
-        for j, yv in enumerate(ys):
-            for k, zv in enumerate(zs):
-                shot = physics.run_case(xv, yv, native=native, metrics=metrics, tier=tier,
-                                        cxaoa_scale=ginv0 / float(zv))
-                backend = backend or str(shot.backend or "")
-                values[(i, j, k)] = (round(float(shot.t_hit), 6)
-                                     if (shot.ok and shot.hit and math.isfinite(float(shot.t_hit)))
-                                     else None)
-                done += 1
-                if done % 8 == 0 or done == total:
-                    _report(report, 0.05 + 0.9 * (done / total), f"{done}/{total} 个顶点")
-    mesh = _marching_tetrahedra(xs, ys, zs, values, float(level_s))
-    elapsed = (time.perf_counter() - t0) * 1000.0
+    # ⚠ **立方体缓存**（2026-10-05 裁决）：键里**不带 `level_s`** —— 滑块只改"在哪一层提面"，
+    #   立方体的 t 值跟它无关。带进键的后果是每动一格重扫 27 个顶点（WSL 上 ≈40 s），
+    #   滑块就没法用了。响应形状不变；`identity.cached` 现在表示"立方体来自缓存"。
+    cube_key = physics.cache_key({"op": "isosurface_cube", "key": row["key"], "tier": tier,
+                                  "n": n, "dv0": dv0, "bc0": bc0, "ginv0": ginv0})
+    mesh_key = "mesh:" + cube_key + ":" + f"{float(level_s):.6f}"
+    cube = cache.get(cube_key) if cache is not None else None
+    cached_cube = cube is not None
+    if not cached_cube:
+        t0 = time.perf_counter()
+        xs = [dv_axis[0] + (dv_axis[1] - dv_axis[0]) * i / (n - 1) for i in range(n)]
+        ys = [bc_axis[0] + (bc_axis[1] - bc_axis[0]) * i / (n - 1) for i in range(n)]
+        zs = [ginv_axis[0] + (ginv_axis[1] - ginv_axis[0]) * i / (n - 1) for i in range(n)]
+        pkg = physics._pkg()
+        metrics = pkg.pool.metrics_of(pkg.pool.resolve(row["key"]))
+        flat, backend = [], ""
+        done, total = 0, n ** 3
+        for i, xv in enumerate(xs):
+            for j, yv in enumerate(ys):
+                for k, zv in enumerate(zs):
+                    shot = physics.run_case(xv, yv, native=row["native"], metrics=metrics, tier=tier,
+                                            cxaoa_scale=ginv0 / float(zv))
+                    backend = backend or str(shot.backend or "")
+                    flat.append(round(float(shot.t_hit), 6)
+                                if (shot.ok and shot.hit and math.isfinite(float(shot.t_hit)))
+                                else None)
+                    done += 1
+                    if done % 8 == 0 or done == total:
+                        _report(report, 0.05 + 0.9 * (done / total), f"建立方体 {done}/{total} 个顶点")
+        cube = {"xs": xs, "ys": ys, "zs": zs, "flat": flat, "backend": backend, "nodes": total,
+                "built_ms": round((time.perf_counter() - t0) * 1000.0, 1)}
+        if cache is not None:
+            cache.put(cube_key, cube)
+    xs, ys, zs, flat, backend = cube["xs"], cube["ys"], cube["zs"], cube["flat"], cube["backend"]
+    t1 = time.perf_counter()
+    values = {(i, j, k): flat[(i * n + j) * n + k]
+              for i in range(n) for j in range(n) for k in range(n)}
+    hit = cache.get(mesh_key) if cache is not None else None
+    if hit is not None:
+        mesh = hit["mesh"]
+        mesh_ms = float(hit.get("mesh_ms") or 0.0)
+    else:
+        mesh = _marching_tetrahedra(xs, ys, zs, values, float(level_s))
+        mesh_ms = round((time.perf_counter() - t1) * 1000.0, 3)
+        if cache is not None:
+            cache.put(mesh_key, {"mesh": mesh, "mesh_ms": mesh_ms})
+    elapsed = (time.perf_counter() - t0) * 1000.0 if not cached_cube else mesh_ms
     out = {
         "kind": "fig3",
         "level_s": float(level_s),
@@ -287,18 +300,20 @@ def isosurface(keys=None, *, tier: str | None = None, level_s: float = 1.0, grid
         "mesh": mesh,
         "axis": {"dv": [float(xs[0]), float(xs[-1])], "bc": [float(ys[0]), float(ys[-1])],
                  "ginv": [float(zs[0]), float(zs[-1])], "n": n},
-        "nodes": total,
+        "nodes": int(cube["nodes"]),
         "notes": [
             f"等值面 = t_hit == {float(level_s):g} s 的 marching tetrahedra（每轴 {n} 个采样）",
             "窗口：以该弹标称点为中心 ΔV ±10% / β ±10% / ginv ±20%",
             "ginv 通过 cxaoa_scale = ginv标称 / ginv目标 施加（γ ∝ CxAoA，系数取目录里的 gamma/ginv）",
+            "立方体（t 值）按 (key, tier, grid) 缓存 ⇒ 只改 level_s 时**不重扫**，只重提面",
             f"tier = {tier}，求解器后端 = {backend or 'unreported'}",
         ],
-        "identity": physics.identity_block(tier=tier, backend=backend, cached=False,
-                                           elapsed_ms=elapsed, nodes=total),
+        "identity": physics.identity_block(tier=tier, backend=backend, cached=cached_cube,
+                                           elapsed_ms=elapsed, nodes=int(cube["nodes"]),
+                                           extra={"cube_cached": cached_cube,
+                                                  "cube_built_ms": cube.get("built_ms"),
+                                                  "mesh_ms": mesh_ms, "grid": n}),
     }
-    if cache is not None:
-        cache.put(key, out)
     return out
 
 
