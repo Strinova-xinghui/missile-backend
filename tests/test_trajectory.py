@@ -64,7 +64,8 @@ def test_trajectory_points_are_thinned_to_300_with_endpoints_kept(client):
     ts = [p[0] for p in pts]
     assert ts == sorted(ts) and len(set(ts)) == len(ts), "时间必须严格递增"
     for p in pts:
-        assert len(p) == 5, f"点必须是 [t, x, y, z, v]：{p}"
+        # 2026-10-24 扩到 11 列（遥测窗格要用速度/马赫/过载/质量/攻角/剩余距离/加速度）
+        assert len(p) == 11, f"点必须是 11 列：{p}"
         assert p[1] is not None and p[2] is not None and p[4] is not None
 
 
@@ -141,10 +142,16 @@ def test_trajectory_is_really_three_dimensional_with_bearing(client):
 
 # --------------------------------------------------------------------- ⑥ 契约
 def test_trajectory_columns_contract(client):
-    """点列是 [t, x, y, z, v]；columns / columns_units 与之一一对应；y 是**绝对高度**。"""
+    """点列 11 列；columns / columns_units 与之一一对应；y 是**绝对高度**。
+
+    ⚠ 2026-10-24：用户对着 statshark 的播放器窗格要求补遥测（速度/马赫/过载/质量/
+      攻角/剩余距离/加速度）。这些量内核本来就在算，只是之前没输出 —— 别在外壳重算。
+    """
     o = client.post("/v1/trajectory", json=TINY).json()
-    assert o["columns"] == ["t", "x", "y", "z", "v"]
-    assert o["columns_units"] == ["s", "m", "m", "m", "m/s"]
+    assert o["columns"] == ["t", "x", "y", "z", "v", "mach", "n_g", "mass",
+                            "aoa_deg", "range", "acc"]
+    assert o["columns_units"] == ["s", "m", "m", "m", "m/s", "Ma", "g", "kg",
+                                  "deg", "m", "m/s^2"]
     assert o["kind"] == "trajectory" and o["keys"] == ["PL-12"]
     case = _case(o)
     assert case["columns"] == o["columns"] and case["columns_units"] == o["columns_units"]
@@ -197,3 +204,36 @@ def test_thin_points_is_pure_and_keeps_endpoints():
                                  {"t": 1.0, "x": 1.0, "y": 2.0}])
     assert holes[0][1] is None and holes[0][2] is None
     assert holes[1][1] == 1.0
+
+
+def test_trajectory_telemetry_is_physical(client):
+    """遥测列必须是**有物理意义的值**，不是占位。
+
+    窗格要显示的 7 个量（速度/马赫/过载/质量/攻角/剩余距离/加速度）都从内核 `Shot.rows` 来。
+    这条挡的是"列名加上了、值全是 0/None"那种看起来正常的坏。
+    """
+    o = client.post("/v1/trajectory", json=TINY).json()
+    c = o["cases"][0]
+    cols = o["columns"]
+    ix = {name: cols.index(name) for name in
+          ("t", "v", "mach", "n_g", "mass", "aoa_deg", "range", "acc")}
+    pts = [p for p in c["points"] if p[ix["n_g"]] is not None]
+    assert len(pts) >= 10, "过载列几乎全是 None —— 遥测没接上"
+
+    def series(name):
+        return [p[ix[name]] for p in pts]
+
+    v = series("v")
+    assert max(v) > min(v) * 1.5, ("速度应当先加速后减速", min(v), max(v))
+    mach = series("mach")
+    assert 0.5 < min(mach) and max(mach) < 6.0, (min(mach), max(mach))
+    ng = series("n_g")
+    assert max(ng) > 2.0, ("最大过载应当明显大于 1G", max(ng))
+    mass = series("mass")
+    assert mass[0] > mass[-1], ("燃料烧掉，质量该下降", mass[0], mass[-1])
+    rng = series("range")
+    assert rng[0] > rng[-1], ("剩余距离该递减", rng[0], rng[-1])
+    acc = series("acc")
+    assert max(acc) > 5.0, ("加速度应当有过峰值", max(acc))
+    aoa = series("aoa_deg")
+    assert max(aoa) >= 0.0, aoa

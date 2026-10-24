@@ -177,12 +177,18 @@ TRAJ_MAX_POINTS = 300
 #: ⚠ 坐标口径（2026-10-24 实测，lead 更正过一次）：**y 是高度（绝对，米）**，
 #:   **x / z 是水平面**（`heading 0 = +x`、`90 = +z`）；默认迎头场景 z 恒为 0，
 #:   但换了方位角（如 `target_bearing_deg=45`）z 会到 3.5 万米 —— **不许因为"默认是 0"就丢列**。
-TRAJ_COLUMNS = ("t", "x", "y", "z", "v")
-#: 与 `TRAJ_COLUMNS` 一一对应的单位（前端画轴要写单位，别在前端各写一份）。
-TRAJ_COLUMNS_UNITS = ("s", "m", "m", "m", "m/s")
+#: ⚠ 2026-10-24 扩到 10 列：用户对照 statshark 的播放器信息窗格，要看
+#:   **速度 / 马赫 / 过载 / 质量 / 攻角 / 剩余距离**，这些内核本来就在算（`Shot.rows` 里全有），
+#:   只是之前没输出。别在外壳重算 —— 内核是唯一出处。
+TRAJ_COLUMNS = ("t", "x", "y", "z", "v", "mach", "n_g", "mass", "aoa_deg", "range", "acc")
+#: 与 `TRAJ_COLUMNS` 一一对应的单位（前端画轴/窗格要写单位，别在前端各写一份）。
+TRAJ_COLUMNS_UNITS = ("s", "m", "m", "m", "m/s", "Ma", "g", "kg", "deg", "m", "m/s^2")
 #: 与 `TRAJ_COLUMNS` 一一对应的**落位小数**。只压体积、不动物理：
 #: t 保留 3 位（采样步长 0.02 s，1 ms 分辨率足够），米与 m/s 保留 1 位（10 cm / 0.1 m/s）。
-TRAJ_DIGITS = (3, 1, 1, 1, 1)
+TRAJ_DIGITS = (3, 1, 1, 1, 1, 2, 2, 1, 2, 1, 2)
+#: 派生列：内核给的是 ax/ay/az 三个分量，窗格要的是**加速度大小**。
+#: ⚠ 只做矢量求模（|a| = sqrt(ax²+ay²+az²)），不重算任何物理 —— 分量全由内核输出。
+TRAJ_DERIVED = {"acc": ("ax", "ay", "az")}
 
 
 def thin_points(rows, *, limit: int = TRAJ_MAX_POINTS, columns=TRAJ_COLUMNS,
@@ -207,7 +213,17 @@ def thin_points(rows, *, limit: int = TRAJ_MAX_POINTS, columns=TRAJ_COLUMNS,
     out = []
     for i in idx:
         r = rows[i]
-        out.append([_round(_num(r.get(c)), d) for c, d in zip(columns, digits)])
+        row = []
+        for c, d in zip(columns, digits):
+            if c in TRAJ_DERIVED:
+                parts = [_num(r.get(k)) for k in TRAJ_DERIVED[c]]
+                if any(p is None for p in parts):
+                    row.append(None)          # 缺分量 ⇒ 该点留空，别当 0
+                else:
+                    row.append(_round(math.sqrt(sum(float(p) * float(p) for p in parts)), d))
+            else:
+                row.append(_round(_num(r.get(c)), d))
+        out.append(row)
     return out
 
 
