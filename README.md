@@ -39,6 +39,7 @@ DATA_DIR=<...>/inputs/resources/2.59.0.28     # 168 个 *.blk + presets.json + m
 | GET | `/v1/catalog` | 与站点 `catalog.json` **同 schema**（求解器包 `catalog.build()` 原样） |
 | POST | `/v1/overlay` | 等时线：`{kind:"plane"\|"bg", keys?, tier?, dv_pin?, iso_step?}` |
 | POST | `/v1/isosurface` | 等时面：`{keys:[一枚], tier?, level_s?, grid?}` |
+| POST | `/v1/trajectory` | 每个所选弹一条 **3D 弹道**：`{keys?, tier?, scene?}` |
 | POST | `/v1/jobs` | 长任务（全池/大网格）：`{job_id}` |
 | GET | `/v1/jobs/{id}` | `{state:"running"\|"done"\|"error", progress, result?}` |
 | GET | `/v1/estimate` | 成本预估（不跑解算）：这次会铺多大网格、能否走同步 |
@@ -63,6 +64,31 @@ DATA_DIR=<...>/inputs/resources/2.59.0.28     # 168 个 *.blk + presets.json + m
   它们落地后，把 `app/overlay.py` 里的扫描换成"转发/包一层"即可，轴/层级口径不变，接口形状不动。
 * **基准弹**：等时线属于 `STANDARD_MISSILE`（默认 `PL-12`，可被请求体覆盖）；`bg` 的固定 ΔV 默认取它标称值。
 * `identity` 三项都能复现这次结果：`solver_sha256`（内核）、`resource_sha256`（数据哈希表指纹）、`tier`。
+
+### `/v1/trajectory`（3D 弹道）
+
+每个所选弹一条逐点弹道，给站点画「三维轨迹集合」（图4 沙盒与默认弹道模式共用）。
+
+```json
+{"ok":true,"kind":"trajectory","keys":["PL-12"],"columns":["t","x","y","z","v"],
+ "columns_units":["s","m","m","m","m/s"],
+ "cases":[{"key":"PL-12","label":"PL-12","native":"cn_pl12",
+           "points":[[0.0,0.0,10000.0,0.0,300.0], …],
+           "n_raw":2170,"n_points":300,"hit":true,"t_hit":45.186,
+           "max_alt_m":12725.1,"dist_flown_m":36966.4,"dv":932.57,"bc":3078.05,
+           "backend":"compiled-c","error":""}],
+ "hits":1,"failed":[],"nodes":300,"notes":[…],
+ "identity":{"tier":"fast","backend":"compiled-c","cached":false,"elapsed_ms":137.4}}
+```
+
+* **坐标口径**：`y` 是**高度**（绝对，米）；`x`/`z` 是水平面（`heading 0 = +x`、`90 = +z`）。
+  全部取自求解器逐采样行（`Shot.rows` 的 `x/y/z/v` 原列），本服务不做换算。
+  ⚠ 默认迎头场景 `z` 恒为 0，但**列永远在**；换 `target_bearing_deg`（如 45）后 `z` 到 3.5 万米。
+* **抽稀**：等间距抽到不超过 300 点（首尾必留）。实测 PL-12 全 2170 点 vs 抽到 300 点，
+  最高点 apex 逐位一致 —— 时间步长是均匀的（dt 0.01945~0.02083 s 的浮点抖动）。
+* **同步返回**，不走 `/v1/jobs`：11 枚约 2.6 s / 124 KB，在 Caddy 默认超时内。
+* `keys` 为空 = 弹池 11 枚；池内短名与 `/v1/catalog` 的预设名**都认**（目录 159 条可算都在列表里）。
+  未知 key ⇒ 400 `unknown_key`；内核拒绝的型号 ⇒ 400 `unsupported_key`（绝不 500）。
 
 ## 4. 本地起服务（真浏览器直连一页说明）
 
@@ -133,7 +159,8 @@ docker run --rm -p 8080:8080 `
 
 ```powershell
 $env:DATA_DIR = "E:\导弹包线图-release\vendor\wt-missile\inputs\resources\2.59.0.28"
-python -m pytest tests -q     # 12 项：健康+数据门 / 目录 schema / 等时线形状与数值 / 缓存 / CORS / 限流 / 任务状态机
+python -m pytest tests -q     # 33 项：健康+数据门 / 目录 schema / 等时线形状与数值 / 缓存 /
+                             #        CORS / 限流 / 任务状态机 / 等时面立方体缓存 / 3D 弹道
 ```
 
 判据都是**真跑求解器**（小窗口，秒级）；只有"数据门"那条故意喂坏数据。

@@ -394,6 +394,77 @@ def _tet_triangle(p, v, level: float):
     return out[:3] if len(out) >= 3 else None
 
 
+# --------------------------------------------------------------------- 弹道（3D）
+#: 弹道一次最多几枚（与 `config.max_keys()` 取小）。11 枚实测 2.57 s 同步返回，
+#: 但全池 168 张 3D 曲线既画不清也没必要 —— 超过就 400，让调用方自己收窄。
+def trajectory(keys=None, *, tier: str | None = None, scene=None, cache=None,
+               limit: int | None = None) -> dict:
+    """**每个所选弹一条 3D 弹道**（世界系逐点采样，抽稀到 ≤ `physics.TRAJ_MAX_POINTS` 点）。
+
+    与 `overlay()` 同一套开头：keys 归一去重 → tier → scene 白名单 → 缓存键 → 缓存。
+    物理一行都不在这里（逐枚 `physics.run_trajectory()`，走 `mapping.scaling_for` 的标称通路）。
+
+    ⚠ **keys 为空 = 全池（11 枚基准弹），不是"什么都不算"。** 与站点左栏"0 弹时按钮禁用"
+      那条口径接得上：前端不许发空请求，但后端也不把空解释成空结果。
+    """
+    tier = (tier or config.tier_default()).lower()
+    if tier not in ("standard", "fast"):
+        raise config.bad_request("bad_tier", f"tier 只能是 standard / fast，收到 {tier!r}")
+    ks = []
+    for k in (keys or []):
+        s = str(k).strip()
+        if s and s not in ks:                     # 去重但保留用户顺序（与 pool.resolve_many 同口径）
+            ks.append(s)
+    if len(ks) > config.max_keys():
+        raise config.bad_request("too_many_keys",
+                                 f"keys 最多 {config.max_keys()} 个（收到 {len(ks)}）")
+    if not ks:
+        ks = physics.pkg_pool_keys()
+    max_points = int(limit or physics.TRAJ_MAX_POINTS)
+    # 场景：不给 = 包默认（与 overlay 逐字节一致的那条口径）。**必须进缓存键**，
+    # 否则改了发射参数仍命中旧弹道，而且看起来完全正常（主仓 CACHE_SCHEMA 同族坑）。
+    scene_kw = physics.scene_from_request(scene)
+    scene_obj = physics.scene_of(scene_kw) if scene_kw else None
+    key = physics.cache_key({"op": "trajectory", "keys": ks, "tier": tier,
+                             "scene": scene_kw, "max_points": max_points})
+    if cache is not None:
+        hit = cache.get(key)
+        if hit is not None:
+            out = dict(hit)
+            out["identity"] = dict(out.get("identity") or {})
+            out["identity"]["cached"] = True
+            out["identity"]["elapsed_ms"] = 0.0
+            return out
+    t0 = time.perf_counter()
+    cases = [physics.run_trajectory(k, tier=tier, scene=scene_obj, limit=max_points) for k in ks]
+    elapsed = (time.perf_counter() - t0) * 1000.0
+    backend = next((c["backend"] for c in cases if c.get("backend")), "")
+    total_points = sum(int(c.get("n_points") or 0) for c in cases)
+    out = {
+        "kind": "trajectory",
+        "keys": [c["key"] for c in cases],
+        "columns": list(physics.TRAJ_COLUMNS),
+        "columns_units": list(physics.TRAJ_COLUMNS_UNITS),
+        "cases": cases,
+        "hits": sum(1 for c in cases if c.get("hit")),
+        "failed": [c["key"] for c in cases if c.get("error")],
+        "nodes": total_points,
+        # ⚠ 这些 notes 会原样出现在页面上 ⇒ 不许写 markdown 星号（主仓 `-k printed_text` 同族坑）。
+        "notes": [
+            "每个点 = [t, x, y, z, v]：y 是高度（绝对，米），x/z 是水平面（heading 0 = +x、90 = +z）",
+            "坐标全部取自求解器逐采样行（Shot.rows 的 x/y/z 原列），本服务不做任何换算",
+            f"等间距抽稀到不超过 {max_points} 点（首尾必留）；原始行数见每条的 n_raw",
+            "默认迎头场景 z 恒为 0；换 target_bearing_deg（如 45）或加 maneuvers 后 z 才非零",
+            f"tier = {tier}，求解器后端 = {backend or 'unreported'}（真跑过才写）",
+        ],
+        "identity": physics.identity_block(tier=tier, backend=backend, cached=False,
+                                          elapsed_ms=elapsed, nodes=total_points),
+    }
+    if cache is not None:
+        cache.put(key, out)
+    return out
+
+
 def big_overlay_spec(kind: str, keys, **kw) -> dict:
     """把 `overlay()` 的调用参数打成一个 dict，交给 `/v1/jobs`（保持参数解析只写一处）。"""
     return {"kind": kind, "keys": list(keys or []), **kw}
