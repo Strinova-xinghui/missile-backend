@@ -130,6 +130,16 @@ def metrics_of(key: str):
     return pkg.pool.metrics_of(pkg.pool.resolve(key))
 
 
+def pkg_pool_keys() -> list:
+    """弹池 11 枚的短名（顺序 = 求解器包 `pool.POOL`）。
+
+    ⚠ 这是**基准弹池**，不是目录里那 168 条预设（`catalog_record()`）。弹道接口
+    keys 为空时用这一份 —— 168 张 3D 曲线画不清，也不该在没选中时默认全算。
+    """
+    pkg = _pkg()
+    return [str(e.key) for e in pkg.pool.POOL]
+
+
 def run_case_bg(beta: float, ginv: float, *, dv: float, native: str, metrics, point,
                 tier: str, scene=None):
     """bg 平面的一跑：**照抄主仓 `workflow.overlay_bg()` 的通路** ——
@@ -156,6 +166,147 @@ def run_case(dv_target: float, bc_target: float, *, native: str, metrics, tier: 
     if abs(float(cxaoa_scale) - 1.0) > 1e-12:
         scaling = replace(scaling, cxaoa_scale=float(cxaoa_scale))
     return pkg.solver.run(scene, missile=native, scaling=scaling, tier=tier, want_cpa=False)
+
+
+# --------------------------------------------------------------------- 弹道（3D 逐点）
+#: 一条弹道最多回多少点（等间距抽稀，首尾必留）。300 点是实测够用的精度：
+#: PL-12 全 2170 点 vs 抽到 300 点，最高点 apex 完全一致（12725.1 m vs 12725.1 m）。
+TRAJ_MAX_POINTS = 300
+
+#: 点列的**列顺序**（响应里 `columns` 如实写出来，前端按名字取下标，别靠记忆）。
+#: ⚠ 坐标口径（2026-10-24 实测，lead 更正过一次）：**y 是高度（绝对，米）**，
+#:   **x / z 是水平面**（`heading 0 = +x`、`90 = +z`）；默认迎头场景 z 恒为 0，
+#:   但换了方位角（如 `target_bearing_deg=45`）z 会到 3.5 万米 —— **不许因为"默认是 0"就丢列**。
+TRAJ_COLUMNS = ("t", "x", "y", "z", "v")
+#: 与 `TRAJ_COLUMNS` 一一对应的单位（前端画轴要写单位，别在前端各写一份）。
+TRAJ_COLUMNS_UNITS = ("s", "m", "m", "m", "m/s")
+#: 与 `TRAJ_COLUMNS` 一一对应的**落位小数**。只压体积、不动物理：
+#: t 保留 3 位（采样步长 0.02 s，1 ms 分辨率足够），米与 m/s 保留 1 位（10 cm / 0.1 m/s）。
+TRAJ_DIGITS = (3, 1, 1, 1, 1)
+
+
+def thin_points(rows, *, limit: int = TRAJ_MAX_POINTS, columns=TRAJ_COLUMNS,
+                digits=TRAJ_DIGITS) -> list:
+    """逐采样行 → 抽稀后的三维点列（等间距取索引，**首尾必留**）。
+
+    时间为均匀步长（dt 0.01945~0.02083 s 的浮点抖动而已）⇒ 等间距抽稀不会漏掉关键段；
+    实测 apex 在 2170 → 300 的抽稀下逐位一致。
+
+    返回 `[[t, x, y, z, v], …]`；缺列/非有限值按 `None` 保留（**不是 0** —— 0 会被读成"测出来是 0"）。
+    """
+    total = len(rows)
+    if total == 0:
+        return []
+    limit = max(2, int(limit))
+    if total <= limit:
+        idx = list(range(total))
+    else:
+        # 等间距取 limit 个索引，然后**把首尾钉死**（round 可能让末点落不到 total-1 上）
+        idx = sorted({round(i * (total - 1) / (limit - 1)) for i in range(limit)})
+        idx[0], idx[-1] = 0, total - 1
+    out = []
+    for i in idx:
+        r = rows[i]
+        out.append([_round(_num(r.get(c)), d) for c, d in zip(columns, digits)])
+    return out
+
+
+def _round(x, digits: int):
+    """落位（`None` 原样透传 —— 别让缺失值变成 0）。"""
+    return None if x is None else round(float(x), int(digits))
+
+
+def _text_of(exc) -> str:
+    """异常的可读文本：`KeyError` 家族（含 `pool.PoolError`）取 `args[0]`，否则 `str()`。"""
+    if isinstance(exc, KeyError) and exc.args:
+        return str(exc.args[0])
+    return f"{type(exc).__name__}: {exc}" if not str(exc) else str(exc)
+
+
+def _num(x):
+    """`solver._f` 的同口径搬运：能转 float 且有限就给 float，否则 `None`（绝不产出 nan）。"""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def resolve_any(key: str):
+    """`key` → `{"key", "label", "native"}`：**池内短名与目录预设名都认**。
+
+    ⚠ 为什么不能只用 `pool.resolve()`（2026-10-24 实测）：站点左栏列的是目录里的**全部可算条目**
+      （`/v1/catalog` 的 159 条），而 `pool.resolve()` 只认我们那 11 枚对比弹池 ——
+      用户从列表里点第 12 枚（如 `atam_mistral`）会直接 400。目录的非池条目 `key == native`
+      （`catalog.py::key_of`），所以第二步拿预设名再试一次就够。
+    """
+    pkg = _pkg()
+    try:
+        e = pkg.pool.resolve(key)
+        return {"key": e.key, "label": e.label, "native": e.native}
+    except Exception:                                               # noqa: BLE001
+        pass
+    name = str(key or "").strip()
+    try:
+        pkg.solver.profile(name)                    # 预设名存在吗（不存在这里就抛）
+        reason = pkg.solver.supported(name)         # 存在但内核拒绝 ⇒ 说清为什么（不猜）
+    except Exception as exc:                                        # noqa: BLE001
+        # 用户多半是在手打池内短名 ⇒ 把池里的 11 个短名一起给出去（比内核那句全表提示更可用）。
+        raise config.bad_request(
+            "unknown_key", f"不认识的弹：{name!r}。池内短名可选：{' / '.join(pkg_pool_keys())}"
+            f"；其余型号用 /v1/catalog 里的 key（= 预设名）") from exc
+    if reason:
+        raise config.bad_request("unsupported_key", f"{name} 算不了（内核拒绝）：{reason}")
+    # ⚠ **不要**在这里调 `catalog.build()`：实测 1.3 s，是这条热路径上最贵的一步，
+    #   而标签只需要 `preset_info`（本进程内 0.1 ms 级）。目录的 label 对非池条目就等于 key。
+    info = pkg.solver.preset_info(name) or {}
+    return {"key": name, "label": str(info.get("bullet_name") or name), "native": name}
+
+
+def run_trajectory(key: str, *, tier: str, scene=None, limit: int = TRAJ_MAX_POINTS) -> dict:
+    """**一条弹道**：resolve 弹 → metrics → 标称 scaling → `solver.run(want_rows=True)` → 抽稀点列。
+
+    照 `run_case()` 的通路（同一套 `mapping.scaling_for()`，本模块不自己算倍率），
+    区别只有 `want_rows=True`（`Shot.rows` 才是逐点采样）与 `want_cpa=False`
+    （弹道接口不要"关引信复跑一次"的那个额外解算）。
+
+    ⚠ `want_rows=False` 时 `Shot.rows` 是**空元组** —— 少传一个参数就静默返回一条空弹道。
+
+    返回 `{key, label, native, points, columns, columns_units, n_raw, n_points,
+    hit, t_hit, max_alt_m, dist_flown_m, dv, bc, backend, error}`。
+    未知弹名 / 内核拒绝的型号 ⇒ `config.bad_request`（**4xx，不是 500**）。
+    """
+    pkg = _pkg()
+    entry = resolve_any(key)                    # 池内短名 / 目录预设名都认；未知 ⇒ 400
+    try:
+        metrics = pkg.mapping.blk_metrics(pkg.solver.profile(entry["native"]))
+        scaling = pkg.mapping.scaling_for(float(metrics.dv), float(metrics.bc), metrics)
+    except Exception as exc:                                        # noqa: BLE001
+        raise config.bad_request("unsupported_key",
+                                 f"{entry['key']} 算不了（内核/权威公式拒绝）：{_text_of(exc)}") from exc
+    shot = pkg.solver.run(pkg.Scene() if scene is None else scene, missile=entry["native"],
+                          scaling=scaling, tier=tier, want_rows=True, want_cpa=False)
+    if not shot.ok:
+        return {"key": entry["key"], "label": entry["label"], "native": entry["native"],
+                "points": [], "columns": list(TRAJ_COLUMNS),
+                "columns_units": list(TRAJ_COLUMNS_UNITS), "n_raw": 0, "n_points": 0,
+                "hit": False, "t_hit": None, "max_alt_m": None, "dist_flown_m": None,
+                "dv": float(metrics.dv), "bc": float(metrics.bc),
+                "backend": str(shot.backend or ""), "error": str(shot.error or "")}
+    points = thin_points(shot.rows, limit=limit)
+    hit = bool(shot.hit)
+    t_hit = _round(_num(shot.t_hit), 3) if hit else None
+    last = shot.rows[-1] if shot.rows else {}
+    return {"key": entry["key"], "label": entry["label"], "native": entry["native"],
+            "points": points, "columns": list(TRAJ_COLUMNS),
+            "columns_units": list(TRAJ_COLUMNS_UNITS),
+            "n_raw": len(shot.rows), "n_points": len(points),
+            "hit": hit, "t_hit": t_hit,
+            "max_alt_m": _round(_num(shot.max_alt_m), 1),
+            "dist_flown_m": _round(_num(last.get("dist_flown")), 1),
+            "dv": float(metrics.dv), "bc": float(metrics.bc),
+            "backend": str(shot.backend or ""), "error": ""}
+
 
 
 # --------------------------------------------------------------------- 轴（口径对齐主仓）

@@ -116,6 +116,13 @@ class IsoReq(BaseModel):
     sync: bool = True
 
 
+class TrajReq(BaseModel):
+    keys: list[str] | None = Field(
+        default=None, description="要算哪几枚（池内短名）；不给 = 池内 11 枚基准弹")
+    tier: Literal["standard", "fast"] | None = None
+    scene: dict | None = Field(default=None, description="发射参数（missile_solver.Scene 的字段名）；不给 = 包默认")
+
+
 class JobReq(BaseModel):
     op: Literal["overlay", "isosurface"] | None = None
     kind: Literal["plane", "bg", "fig3"] | None = None
@@ -179,6 +186,21 @@ async def post_isosurface(req: IsoReq):
     _check_keys(req.keys)
     return overlay.isosurface(req.keys, tier=req.tier, level_s=req.level_s, grid=req.grid,
                               sync=req.sync, cache=CACHE, scene=req.scene)
+
+
+@app.post(f"{config.API_PREFIX}/trajectory")
+async def post_trajectory(req: TrajReq):
+    """每个所选弹一条 **3D 弹道**（世界系逐点采样，抽稀到 ≤300 点）。
+
+    **同步返回，不走 `/v1/jobs`**：11 枚实测约 2.6 s / 124 KB，在 Caddy 默认超时内安全；
+    弹道是"点一下就算"的主路径，再套一层任务轮询只会把交互做慢。
+
+    ⚠ 与 `post_overlay` 一样**直接调用**（不 `run_in_threadpool`）：求解器的乘数施加是靠
+      monkeypatch 模块级 `wt.load_profile`（见 `missile_solver.solver._apply`），并发跑会互相串味
+      ⇒ 本服务刻意让解算串行。要真正并行得先把那条通路改成可重入的，不是这里加个线程池。
+    """
+    _check_keys(req.keys)
+    return overlay.trajectory(req.keys, tier=req.tier, scene=req.scene, cache=CACHE)
 
 
 @app.post(f"{config.API_PREFIX}/jobs")
