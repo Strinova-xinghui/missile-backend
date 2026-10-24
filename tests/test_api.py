@@ -121,6 +121,92 @@ def test_overlay_physics_matches_solver_directly():
     assert abs(float(shot.t_hit) - 45.185) < 0.05, shot.t_hit
 
 
+# --------------------------------------------------------------------- ②b 发射参数（scene）
+SCENE_FAR = {"range_m": 80000.0}          # 50 km -> 80 km：同样的弹，飞得更久
+
+
+def test_scene_from_request_is_whitelisted_and_drops_blanks():
+    """白名单 + 空值丢弃：拼错的键不许漏进 Scene(**kw)（那是 500），空串 = 用默认。"""
+    kw = physics.scene_from_request({"vm0": 300, "range_m": "", "bogus": 1,
+                                     "alt_m": None, "observation": "ideal"})
+    assert kw == {"vm0": 300.0, "observation": "ideal"}
+    assert physics.scene_from_request(None) == {} and physics.scene_from_request({}) == {}
+    with pytest.raises(Exception):
+        physics.scene_from_request({"observation": "nope"})
+    with pytest.raises(Exception):
+        physics.scene_from_request({"vm0": "abc"})
+    with pytest.raises(Exception):
+        physics.scene_from_request([1, 2])
+
+
+def test_scene_default_is_byte_identical_to_no_scene(client):
+    """不给 scene 与给空 scene 必须同一条缓存、同一批等时线（旧行为零漂移）。"""
+    base = client.post("/v1/overlay", json=TINY).json()
+    empty = client.post("/v1/overlay", json={**TINY, "scene": {}}).json()
+    assert empty["identity"]["cached"] is True, "空 scene 不该另起一条缓存"
+    assert empty["iso_lines"] == base["iso_lines"]
+
+
+def test_overlay_scene_really_changes_physics_and_cache(client):
+    """**反证**：改 scene ⇒ 等时线真的变；且键里带了 scene（不能偷偷复用旧缓存）。
+
+    这条守的是"只把 scene 塞进缓存键、物理那条路没传"——那是最像正常的坏：
+    缓存乖乖换新键、返回 200，图却纹丝不动。
+    """
+    base = client.post("/v1/overlay", json=TINY).json()
+    far = client.post("/v1/overlay", json={**TINY, "scene": SCENE_FAR}).json()
+    assert far["identity"]["cached"] is False, "scene 变了却命中旧缓存 ⇒ 键里没带 scene"
+    assert far["iso_lines"] != base["iso_lines"], "改 scene 后等时线一模一样 ⇒ scene 没进物理"
+
+
+def test_overlay_bg_scene_really_changes_physics(client):
+    """图2（kind=bg）那条分支也要真的吃 scene —— 它和 plane 是两条不同的物理调用。
+
+    ⚠ 2026-10-23 实测抓到的真 bug：run_case_bg(...) 一开始**没传 scene**，
+    而缓存键已经含 scene ⇒ 改发射参数后图2 纹丝不动、缓存还换了新键。
+    """
+    body = {"kind": "bg", "keys": ["PL-12"], "tier": "fast", "beta_step": 40.0, "ginv_step": 4e-4}
+    base = client.post("/v1/overlay", json=body).json()
+    far = client.post("/v1/overlay", json={**body, "scene": SCENE_FAR}).json()
+    assert base["iso_lines"] and far["iso_lines"], "两条都该有等时线"
+    assert far["iso_lines"] != base["iso_lines"], \
+        "bg 分支改了 scene 却不动 ⇒ run_case_bg 没把 scene 传下去"
+
+
+def test_isosurface_scene_changes_cube(client):
+    """等时面立方体也要吃 scene（键里带 scene，且 t 值真的变）。"""
+    body = {"keys": ["PL-12"], "tier": "fast", "grid": 3, "level_s": 45.0}
+    base = client.post("/v1/isosurface", json=body).json()
+    far = client.post("/v1/isosurface", json={**body, "scene": SCENE_FAR}).json()
+    assert far["identity"]["cached"] is False, "scene 变了却命中旧立方体"
+    assert base["axis"] == far["axis"], "同一颗弹的中心，轴该一致"
+    # 立方体里的 t 值变了 ⇒ 提面结果不该逐字节相同（同层级）
+    assert base["mesh"]["vertices"] != far["mesh"]["vertices"] or \
+        base["mesh"]["triangles"] != far["mesh"]["triangles"], "scene 没进立方体"
+
+
+def test_scene_survives_as_job(client):
+    """**/v1/jobs 那条路**（同步上限更高）也要把 scene 传到 —— 判据是它与同步结果**逐值一致**。
+
+    丢掉 scene 的后果不是报错，而是"大的那一档静默按默认场景算"，所以只验 200 / 有图抓不到。
+    """
+    import time as _t
+    sync = client.post("/v1/overlay", json={**TINY, "scene": SCENE_FAR}).json()
+    r = client.post("/v1/jobs", json={**TINY, "kind": "plane", "scene": SCENE_FAR})
+    assert r.status_code == 200, r.text
+    jid = r.json()["job_id"]
+    st = {}
+    for _ in range(400):
+        st = client.get("/v1/jobs/" + jid).json()
+        if st["state"] in ("done", "error"):
+            break
+        _t.sleep(0.05)
+    assert st["state"] == "done", st
+    job = st["result"]
+    assert job["iso_lines"] == sync["iso_lines"], \
+        "job 与同步结果不一致 ⇒ /v1/jobs 那条路把 scene 丢了（退回默认场景）"
+
+
 def test_overlay_rejects_bad_requests(client):
     assert client.post("/v1/overlay", json={**TINY, "kind": "nope"}).status_code == 400
     assert client.post("/v1/overlay", json={**TINY, "tier": "pro"}).status_code == 400

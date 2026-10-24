@@ -329,6 +329,54 @@ def identity_block(*, tier: str, backend: str = "", cached: bool = False,
     return out
 
 
+#: 可从请求里改的场景字段（2026-10-23：让 Pages 站点能改发射参数）。
+#: 名字与 `missile_solver.spec.Scene` **完全一致**（直接 `Scene(**kw)`），不做重命名。
+SCENE_KEYS = (
+    "range_m", "alt_m", "target_alt_m", "target_bearing_deg",
+    "vm0", "launch_heading_deg", "launch_pitch_deg",
+    "target_speed_ms", "target_heading_deg", "target_pitch_deg",
+    "duration_s", "observation",
+)
+
+
+def scene_from_request(raw) -> dict:
+    """请求里的 `scene` 字典 -> **只保留白名单里的字段**。
+
+    ⚠ 两条不可省：
+    1. 白名单以外的键直接丢（不转发给 `Scene(**kw)`）—— 否则一个拼错的键就是 500；
+    2. 空值（`None` / 空串）也丢（= 用默认）。存在的**真**值才覆盖。
+    `target_alt_m` 例外规则跟主仓一致：丢就是「与发射同高」。
+    """
+    if not raw:
+        return {}
+    if not isinstance(raw, dict):
+        raise config.bad_request("bad_scene", "scene 必须是对象")
+    out = {}
+    for k in SCENE_KEYS:
+        if k not in raw:
+            continue
+        v = raw[k]
+        if v is None or (isinstance(v, str) and not v.strip()):
+            continue
+        if k == "observation":
+            v = str(v)
+            if v not in ("ideal", "locked"):
+                raise config.bad_request("bad_observation", f"observation 只能是 ideal / locked，收到 {v!r}")
+            out[k] = v
+            continue
+        try:
+            out[k] = float(v)
+        except (TypeError, ValueError):
+            raise config.bad_request("bad_scene", f"scene.{k} 必须是数字，收到 {v!r}")
+    return out
+
+
+def scene_of(raw):
+    """请求 → `missile_solver.Scene`（空字典 = 包默认，行为与旧版逐字节一致）。"""
+    kw = scene_from_request(raw)
+    return _pkg().Scene(**kw) if kw else _pkg().Scene()
+
+
 def cache_key(parts: dict) -> str:
     """与主仓 `cache_key()` **同口径**：把"输入 → 结果"的全部要素做成规范化 JSON 再 sha256。
 

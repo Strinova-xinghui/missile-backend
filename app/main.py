@@ -104,6 +104,7 @@ class OverlayReq(BaseModel):
     ginv_step: float | None = Field(default=None, description="bg 的 ginv 步长（默认 4e-4）")
     standard: str | None = Field(default=None, description="基准弹（池内短名），默认 PL-12")
     sync: bool = Field(default=True, description="false ⇒ 允许用 job 上限的节点数（仅供 /v1/jobs 内部）")
+    scene: dict | None = Field(default=None, description="发射参数（missile_solver.Scene 的字段名）；不给 = 包默认")
 
 
 class IsoReq(BaseModel):
@@ -111,6 +112,7 @@ class IsoReq(BaseModel):
     tier: Literal["standard", "fast"] | None = None
     level_s: float = Field(default=1.0, description="等值面的 t_hit 层级 [s]")
     grid: int | None = Field(default=None, description="每轴采样数（默认 5 ⇒ 125 个顶点）")
+    scene: dict | None = Field(default=None, description="发射参数（missile_solver.Scene 的字段名）；不给 = 包默认")
     sync: bool = True
 
 
@@ -128,6 +130,7 @@ class JobReq(BaseModel):
     standard: str | None = None
     level_s: float = 1.0
     grid: int | None = None
+    scene: dict | None = Field(default=None, description="发射参数（missile_solver.Scene 的字段名）；不给 = 包默认")
 
 
 # --------------------------------------------------------------------- 路由
@@ -167,14 +170,15 @@ async def post_overlay(req: OverlayReq):
     return overlay.overlay(req.kind, req.keys, tier=req.tier, dv_pin=req.dv_pin,
                            iso_step=req.iso_step, dv_step=req.dv_step, bc_step=req.bc_step,
                            beta_step=req.beta_step, ginv_step=req.ginv_step,
-                           standard=req.standard, sync=req.sync, cache=CACHE)
+                           standard=req.standard, sync=req.sync, cache=CACHE,
+                           scene=req.scene)
 
 
 @app.post(f"{config.API_PREFIX}/isosurface")
 async def post_isosurface(req: IsoReq):
     _check_keys(req.keys)
     return overlay.isosurface(req.keys, tier=req.tier, level_s=req.level_s, grid=req.grid,
-                              sync=req.sync, cache=CACHE)
+                              sync=req.sync, cache=CACHE, scene=req.scene)
 
 
 @app.post(f"{config.API_PREFIX}/jobs")
@@ -184,14 +188,16 @@ async def post_jobs(req: JobReq):
                     and req.level_s else "overlay")
     if op == "isosurface":
         fn = lambda report: overlay.isosurface(req.keys, tier=req.tier, level_s=req.level_s,
-                                               grid=req.grid, sync=False, report=report, cache=CACHE)
+                                               grid=req.grid, sync=False, report=report, cache=CACHE,
+                                               scene=req.scene)
     else:
         kind = req.kind if req.kind in ("plane", "bg") else "plane"
         fn = lambda report: overlay.overlay(kind, req.keys, tier=req.tier, dv_pin=req.dv_pin,
                                             iso_step=req.iso_step, dv_step=req.dv_step,
                                             bc_step=req.bc_step, beta_step=req.beta_step,
                                             ginv_step=req.ginv_step, standard=req.standard,
-                                            sync=False, report=report, cache=CACHE)
+                                            sync=False, report=report, cache=CACHE,
+                                            scene=req.scene)
     job_id = JOBS.submit(fn, label=op)
     return {"ok": True, "job_id": job_id, "op": op,
             "poll": f"{config.API_PREFIX}/jobs/{job_id}"}

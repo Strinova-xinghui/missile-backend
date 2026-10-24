@@ -46,11 +46,10 @@ def test_cube_cache_checker_has_teeth():
     """反证：把 `level_s` 塞回立方体键 ⇒ 必须红（这正是"滑块每动一格重扫 40 s"那个病）。"""
     code = _code()
     assert _cube_cache_problems(code) == []
-    mutant = code.replace('{"op": "isosurface_cube", "key": row["key"], "tier": tier,\n'
-                          '                                  "n": n, "dv0": dv0, "bc0": bc0, "ginv0": ginv0}',
-                          '{"op": "isosurface_cube", "key": row["key"], "tier": tier,\n'
-                          '                                  "level_s": float(level_s),\n'
-                          '                                  "n": n, "dv0": dv0, "bc0": bc0, "ginv0": ginv0}', 1)
+    # ⚠ 只锚在 `"op"` 上，不整段抄键的其余内容 —— 立方体键后来加过 `scene`/别的量，
+    #   整段抄的写法会**静默失配**，反证退化成"没改到源码"（2026-10-23 就是这么红的）。
+    mutant = code.replace('{"op": "isosurface_cube", "key": row["key"], "tier": tier,',
+                          '{"op": "isosurface_cube", "level_s": float(level_s), "key": row["key"], "tier": tier,', 1)
     assert mutant != code, "反证没改到源码"
     assert _cube_cache_problems(mutant), "把 level_s 塞回立方体键却抓不到"
 

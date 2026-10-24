@@ -86,7 +86,8 @@ def _axis_rows(kind: str, keys):
 
 def overlay(kind: str, keys, *, tier: str | None = None, dv_pin: float | None = None,
             iso_step: float = 1.0, dv_step=None, bc_step=None, beta_step=None, ginv_step=None,
-            standard: str | None = None, sync: bool = True, report=None, cache=None) -> dict:
+            standard: str | None = None, sync: bool = True, report=None, cache=None,
+            scene=None) -> dict:
     """等时线：`kind="plane"` 在 (ΔV, β) 上扫，`kind="bg"` 在 (β, ginv) 上扫。
 
     基准弹（等时线属于它）默认 `STANDARD_MISSILE`（PL-12）；`bg` 的固定 ΔV 默认取基准弹的标称值。
@@ -110,10 +111,16 @@ def overlay(kind: str, keys, *, tier: str | None = None, dv_pin: float | None = 
     x_step, y_step, nodes = grid_steps(kind, axis, dv_step=dv_step, bc_step=bc_step,
                                        beta_step=beta_step, ginv_step=ginv_step, max_nodes=limit)
     xs, ys = physics.make_grid(axis["xlim"], axis["ylim"], step=x_step, step_y=y_step)
+    # 场景（2026-10-23）：不给 = 包默认（与旧版逐字节一致）。解析一次，整轮扫描共用同一份。
+    scene_kw = physics.scene_from_request(scene)
+    scene_obj = physics.scene_of(scene_kw) if scene_kw else None
+
     key = physics.cache_key({"op": "overlay", "kind": kind, "keys": keys, "standard": std_key,
                              "tier": tier, "iso_step": iso_step, "dv_step": x_step,
                              "bc_step": y_step, "beta_step": beta_step, "ginv_step": ginv_step,
                              "dv_pin": dv_pin, "ginv_inject": bool(kind == "bg"),
+                             # ⚠ 场景必须进键：否则改了发射参数仍命中旧缓存，而且看起来完全正常（主仓 CACHE_SCHEMA 同族坑）。
+                             "scene": scene_kw,
                              "xlim": axis["xlim"], "ylim": axis["ylim"]})
     if cache is not None:
         hit = cache.get(key)
@@ -147,11 +154,13 @@ def overlay(kind: str, keys, *, tier: str | None = None, dv_pin: float | None = 
                 # ⚠ bg 的纵轴 ginv 必须**真的进物理**（只喂 (ΔV, β) 会让这一维变成纯坐标 ⇒
                 #   等值线整条压在同一 β 列）。口径不自己推：走主仓 overlay_bg 的同一条通路
                 #   `missile_solver.bg.scaling_for(point, metrics, beta=, ginv=, dv=)`。
+                # ⚠ 场景必须**真的进物理**：只塞进缓存键而这里不传，就是"改了发射参数、
+                #   图2 纹丝不动，同时缓存还乖乖换了新键"——最像正常的那种坏。
                 shot = physics.run_case_bg(float(xv), float(yv), dv=float(dv_pin),
                                            native=std_native, metrics=std_metrics,
-                                           point=std_point, tier=tier)
+                                           point=std_point, tier=tier, scene=scene_obj)
             else:
-                shot = physics.run_case(dv_target, bc_target, native=std_native,
+                shot = physics.run_case(dv_target, bc_target, native=std_native, scene=scene_obj,
                                         metrics=std_metrics, tier=tier)
             if shot.ok and shot.hit and math.isfinite(float(shot.t_hit)):
                 col.append(round(float(shot.t_hit), 6))
@@ -220,7 +229,7 @@ def _report(report, frac: float, note: str = "") -> None:
 
 # --------------------------------------------------------------------- 等时面
 def isosurface(keys=None, *, tier: str | None = None, level_s: float = 1.0, grid: int | None = None,
-               sync: bool = True, report=None, cache=None) -> dict:
+               sync: bool = True, report=None, cache=None, scene=None) -> dict:
     """等时面：**单枚弹**的 (ΔV, β, ginv) 立方体里 `t_hit == level_s` 的等值面（marching tetrahedra）。
 
     * 立方体窗口：以该弹标称点为中心，ΔV ±10% / β ±10% / ginv ±20%（`grid` 是每轴采样数）；
@@ -249,7 +258,12 @@ def isosurface(keys=None, *, tier: str | None = None, level_s: float = 1.0, grid
     # ⚠ **立方体缓存**（2026-10-05 裁决）：键里**不带 `level_s`** —— 滑块只改"在哪一层提面"，
     #   立方体的 t 值跟它无关。带进键的后果是每动一格重扫 27 个顶点（WSL 上 ≈40 s），
     #   滑块就没法用了。响应形状不变；`identity.cached` 现在表示"立方体来自缓存"。
+    # 场景（2026-10-23）：同上，不给 = 包默认。⚠ 必须进**立方体**键（立方体里的 t 值随场景变）；
+    #   mesh 键是 cube 键拼出来的，自动跟着变，不用另加。
+    scene_kw = physics.scene_from_request(scene)
+    scene_obj = physics.scene_of(scene_kw) if scene_kw else None
     cube_key = physics.cache_key({"op": "isosurface_cube", "key": row["key"], "tier": tier,
+                                  "scene": scene_kw,
                                   "n": n, "dv0": dv0, "bc0": bc0, "ginv0": ginv0})
     mesh_key = "mesh:" + cube_key + ":" + f"{float(level_s):.6f}"
     cube = cache.get(cube_key) if cache is not None else None
@@ -266,7 +280,7 @@ def isosurface(keys=None, *, tier: str | None = None, level_s: float = 1.0, grid
         for i, xv in enumerate(xs):
             for j, yv in enumerate(ys):
                 for k, zv in enumerate(zs):
-                    shot = physics.run_case(xv, yv, native=row["native"], metrics=metrics, tier=tier,
+                    shot = physics.run_case(xv, yv, native=row["native"], metrics=metrics, tier=tier, scene=scene_obj,
                                             cxaoa_scale=ginv0 / float(zv))
                     backend = backend or str(shot.backend or "")
                     flat.append(round(float(shot.t_hit), 6)
